@@ -1,0 +1,13 @@
+# DineSight AI - Backend Dependencies
+# Phase 1: Video Ingestion & Basic CV
+opencv-python>=4.10.0
+numpy>=1.26.0
+python-dotenv>=1.0.0
+
+# Future Phases (Will be installed in subsequent phases):
+# ultralytics>=8.3.0       # Phase 2: YOLOv8 Object Detection & Tracking
+# fastapi>=0.115.0         # Phase 4: REST API Backend
+# uvicorn>=0.30.0          # Phase 4: ASGI Server
+# sqlalchemy>=2.0.0        # Phase 4: Database ORM
+# pydantic>=2.9.0          # Phase 4: Data Validation
+

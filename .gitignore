@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment Variables
+.env
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Large Model Weights & Data
+data/models/*.pt
+data/models/*.onnx
+!data/sample_videos/restaurant_sample.mp4
+
+# Node & Frontend (for later phases)
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Database
+*.sqlite3
+*.db
+
