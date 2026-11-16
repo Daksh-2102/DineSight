@@ -144,9 +144,9 @@ def main():
     load_dotenv()
 
     # Determine default video: prefer pedestrians_surveillance.mp4 if present
-    default_vid = "data/sample_videos/pedestrians_surveillance.mp4"
+    default_vid = os.getenv("DEFAULT_VIDEO_SOURCE", "data/sample_videos/restaurant_cctv_sample.mp4")
     if not os.path.exists(default_vid):
-        default_vid = os.getenv("DEFAULT_VIDEO_SOURCE", "data/sample_videos/restaurant_sample.mp4")
+        default_vid = "data/sample_videos/pedestrians_surveillance.mp4"
 
     parser = argparse.ArgumentParser(
         description="DineSight AI - Phase 2: YOLOv8 Detection & ByteTrack Tracking"

@@ -1,27 +1,30 @@
 """
-DineSight AI - Master Application Runner
-========================================
-Unifies Phase 1 (Video Ingestion) and Phase 2 (YOLOv8 Detection & ByteTrack Tracking)
-into a single, configurable interface.
+DineSight AI - Master Integrated Application Runner
+===================================================
+Unifies all completed project phases into a single interactive demonstration:
+- Phase 1: OpenCV Video Ingestion & Frame Sampling.
+- Phase 2: YOLOv8 Object Detection & ByteTrack Persistent Tracking.
+- Phase 3: Spatial ROI Mapping, Table-State Recognition (Vacant/Occupied/Dining),
+           and Entrance Queue Monitoring.
 
 Modes:
-    1. 'track'  (Default): Full pipeline (Video Ingestion + YOLOv8 + ByteTrack IDs).
-    2. 'detect': Detection only (Video Ingestion + YOLOv8 Bounding Boxes without tracking).
-    3. 'raw'   : Raw video ingestion (Phase 1 baseline without AI models).
+    1. 'full'   (Default): Complete end-to-end system (Phase 1 + 2 + 3).
+    2. 'track'  : Video + YOLOv8 + ByteTrack IDs (Phase 2).
+    3. 'detect' : Video + YOLOv8 Bounding Boxes only.
+    4. 'raw'    : Baseline Video Ingestion without AI (Phase 1).
 
 Usage:
-    python run.py                          # Full AI tracking pipeline
-    python run.py --mode raw               # Test video feed only (Phase 1)
-    python run.py --mode detect            # YOLOv8 detection only
-    python run.py --source 0               # Run on live webcam
-    python run.py --skip 2                 # Sample every 2nd frame
+    python run.py                          # Full system (Tables + Queue + Tracking)
+    python run.py --mode track             # Tracking only (Phase 2)
+    python run.py --mode raw               # Raw video stream only (Phase 1)
+    python run.py --source 0               # Run on live laptop webcam
 """
 
 import os
 import sys
 import time
 import argparse
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 import cv2
 import numpy as np
 from dotenv import load_dotenv
@@ -32,6 +35,9 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from backend.app.core.video_reader import VideoReader
 from backend.app.core.detector import YOLODetector
 from backend.app.core.tracker import ByteTracker
+from backend.app.core.roi_manager import ROIManager
+from backend.app.core.state_engine import TableStateEngine
+from backend.app.core.queue_monitor import QueueMonitor
 
 
 def draw_master_hud(
@@ -44,22 +50,25 @@ def draw_master_hud(
     device_name: str,
     count: int,
     total_unique: int,
-    frame_skip: int,
-    paused: bool,
+    table_states: Optional[Dict[str, str]] = None,
+    queue_metrics: Optional[Dict] = None,
+    frame_skip: int = 1,
+    paused: bool = False,
 ) -> None:
-    """Render a unified HUD header and footer across all modes."""
+    """Render a unified HUD header and footer across all operational modes."""
     h, w = frame.shape[:2]
 
     # --- Header Bar ---
-    header_h = 60
+    header_h = 65
     overlay_top = frame.copy()
-    cv2.rectangle(overlay_top, (0, 0), (w, header_h), (18, 22, 28), -1)
+    cv2.rectangle(overlay_top, (0, 0), (w, header_h), (16, 20, 26), -1)
     cv2.addWeighted(overlay_top, 0.88, frame, 0.12, 0, frame)
 
     mode_label = {
-        "raw": "RAW VIDEO INGESTION",
-        "detect": "YOLOv8 DETECTION ONLY",
-        "track": "YOLOv8 + BYTETRACK TRACKING",
+        "raw": "RAW VIDEO INGESTION (Phase 1)",
+        "detect": "YOLOv8 DETECTION ONLY (Phase 2)",
+        "track": "YOLOv8 + BYTETRACK TRACKING (Phase 2)",
+        "full": "FULL RESTAURANT ANALYTICS (Phase 1+2+3)",
     }.get(mode, mode.upper())
 
     # Title & Mode
@@ -68,35 +77,41 @@ def draw_master_hud(
         f"DineSight AI | {mode_label}",
         (15, 26),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
+        0.62,
         (0, 215, 255),
         2,
         cv2.LINE_AA,
     )
 
     # Device & Settings
-    dev_str = f"Device: {device_name}" if mode != "raw" else "Mode: Direct Passthrough"
+    dev_str = f"Device: {device_name}  |  Sampling: 1/{frame_skip}" if mode != "raw" else f"Mode: Passthrough  |  Sampling: 1/{frame_skip}"
     dev_col = (0, 255, 127) if "GPU" in device_name else (200, 200, 200)
-    cv2.putText(frame, dev_str, (15, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.42, dev_col, 1, cv2.LINE_AA)
+    cv2.putText(frame, dev_str, (15, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.40, dev_col, 1, cv2.LINE_AA)
 
     # Performance & Object Telemetry
     inf_fps = (1000.0 / inf_time_ms) if inf_time_ms > 0 else 0.0
-    if mode == "raw":
-        perf_line = f"Pipeline: {pipeline_fps:4.1f} FPS  |  Sampling: 1/{frame_skip}"
-        count_line = f"Frame: {frame_idx}/{total_frames}" if total_frames > 0 else f"Frame: {frame_idx}"
-    elif mode == "detect":
-        perf_line = f"Inference: {inf_time_ms:4.1f}ms ({inf_fps:3.0f} FPS)  |  Pipeline: {pipeline_fps:4.1f} FPS"
-        count_line = f"People Detected: {count}  |  Frame: {frame_idx}/{total_frames}"
-    else:  # track
-        perf_line = f"Inference: {inf_time_ms:4.1f}ms ({inf_fps:3.0f} FPS)  |  Pipeline: {pipeline_fps:4.1f} FPS"
+    if mode == "full" and table_states is not None:
+        total_tables = len(table_states)
+        occ = sum(1 for s in table_states.values() if s != "VACANT")
+        pct = int((occ / total_tables) * 100) if total_tables > 0 else 0
+        perf_line = f"Inf: {inf_time_ms:4.1f}ms ({inf_fps:3.0f} FPS)  |  Pipeline: {pipeline_fps:4.1f} FPS  |  People: {count}"
+        count_line = f"Occupancy: {occ}/{total_tables} ({pct}%)  |  Queue: {queue_metrics.get('current_queue_length', 0)} waiting"
+    elif mode == "track":
+        perf_line = f"Inf: {inf_time_ms:4.1f}ms ({inf_fps:3.0f} FPS)  |  Pipeline: {pipeline_fps:4.1f} FPS"
         count_line = f"Active: {count}  |  Total Seen: {total_unique}  |  Frame: {frame_idx}/{total_frames}"
+    elif mode == "detect":
+        perf_line = f"Inf: {inf_time_ms:4.1f}ms ({inf_fps:3.0f} FPS)  |  Pipeline: {pipeline_fps:4.1f} FPS"
+        count_line = f"People Detected: {count}  |  Frame: {frame_idx}/{total_frames}"
+    else:  # raw
+        perf_line = f"Pipeline: {pipeline_fps:4.1f} FPS"
+        count_line = f"Frame: {frame_idx}/{total_frames}" if total_frames > 0 else f"Frame: {frame_idx}"
 
     cv2.putText(
         frame,
         perf_line,
-        (w - 600 if w >= 950 else 15, 26 if w >= 950 else 85),
+        (w - 650 if w >= 1000 else 15, 26 if w >= 1000 else 90),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
+        0.44,
         (220, 220, 220),
         1,
         cv2.LINE_AA,
@@ -104,10 +119,10 @@ def draw_master_hud(
     cv2.putText(
         frame,
         count_line,
-        (w - 600 if w >= 950 else 15, 48 if w >= 950 else 105),
+        (w - 650 if w >= 1000 else 15, 50 if w >= 1000 else 112),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.42,
-        (180, 210, 230),
+        (180, 215, 240),
         1,
         cv2.LINE_AA,
     )
@@ -118,9 +133,9 @@ def draw_master_hud(
     cv2.rectangle(overlay_bot, (0, h - footer_h), (w, h), (14, 16, 22), -1)
     cv2.addWeighted(overlay_bot, 0.88, frame, 0.12, 0, frame)
 
-    status_str = "PAUSED [SPACE to resume]" if paused else "RUNNING [SPACE to pause]"
+    status_str = "PAUSED [SPACE to resume]" if paused else "ACTIVE [SPACE to pause]"
     status_col = (0, 165, 255) if paused else (0, 255, 127)
-    cv2.putText(frame, status_str, (15, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.45, status_col, 1, cv2.LINE_AA)
+    cv2.putText(frame, status_str, (15, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.44, status_col, 1, cv2.LINE_AA)
 
     tips = "[SPACE]: Pause  |  [r]: Restart  |  [+/-]: Sampling  |  [m]: Toggle Mode  |  [q]: Quit"
     cv2.putText(
@@ -138,20 +153,19 @@ def draw_master_hud(
 def main():
     load_dotenv()
 
-    # Default video selection
-    default_vid = "data/sample_videos/pedestrians_surveillance.mp4"
+    default_vid = os.getenv("DEFAULT_VIDEO_SOURCE", "data/sample_videos/restaurant_cctv_sample.mp4")
     if not os.path.exists(default_vid):
-        default_vid = os.getenv("DEFAULT_VIDEO_SOURCE", "data/sample_videos/restaurant_sample.mp4")
+        default_vid = "data/sample_videos/pedestrians_surveillance.mp4"
 
     parser = argparse.ArgumentParser(
-        description="DineSight AI - Master Application Runner"
+        description="DineSight AI - Master Project Runner"
     )
     parser.add_argument(
         "--mode",
         type=str,
-        default="track",
-        choices=["raw", "detect", "track"],
-        help="Operation mode: 'raw' (Phase 1), 'detect' (YOLO only), 'track' (YOLO + ByteTrack)",
+        default="full",
+        choices=["raw", "detect", "track", "full"],
+        help="Operation mode: 'full' (Phase 3 tables+queue), 'track' (Phase 2), 'detect', 'raw'",
     )
     parser.add_argument(
         "--source",
@@ -166,10 +180,16 @@ def main():
         help="Path to YOLO weights (.pt)",
     )
     parser.add_argument(
+        "--rois",
+        type=str,
+        default="config/rois.json",
+        help="Path to ROI configuration file",
+    )
+    parser.add_argument(
         "--conf",
         type=float,
         default=0.35,
-        help="Confidence threshold for person detection (default: 0.35)",
+        help="Confidence threshold for person detection",
     )
     parser.add_argument(
         "--width",
@@ -204,13 +224,13 @@ def main():
     args = parser.parse_args()
     source_val: Union[str, int] = int(args.source) if args.source.isdigit() else args.source
 
-    print("\n" + "=" * 65)
-    print("             DINESIGHT AI - MASTER PIPELINE")
-    print("=" * 65)
+    print("\n" + "=" * 70)
+    print("             DINESIGHT AI - MASTER APPLICATION RUNNER")
+    print("=" * 70)
     print(f"Active Mode  : {args.mode.upper()}")
     print(f"Video Source : {source_val}")
 
-    # 1. Initialize Phase 1 Video Ingestion
+    # 1. Initialize Video Ingestion (Phase 1)
     try:
         reader = VideoReader(
             source=source_val,
@@ -222,43 +242,34 @@ def main():
         print(f"\n[Error] {e}", file=sys.stderr)
         sys.exit(1)
 
-    # 2. Initialize AI Engines based on mode
+    # 2. Lazy Initialization for Phase 2 & 3 Components
     detector = None
     tracker = None
+    roi_manager = None
+    state_engine = None
+    queue_monitor = None
     device_name = "CPU"
 
-    if args.mode in ("detect", "track"):
-        print(f"Model Weights: {args.model}")
-        print(f"Confidence   : {args.conf}")
-
-        if args.mode == "detect":
-            detector = YOLODetector(
-                model_path=args.model,
-                conf_threshold=args.conf,
-                target_classes=[0],
-                device=args.device,
-            )
-            device_name = detector.device_name
-        else:  # track
-            tracker = ByteTracker(
-                model_path=args.model,
-                conf_threshold=args.conf,
-                target_classes=[0],
-                device=args.device,
-            )
-            device_name = tracker.device_name
+    # Always initialize ROI and state engines for full mode
+    if os.path.exists(args.rois):
+        try:
+            roi_manager = ROIManager(config_path=args.rois, point_mode="bottom_center")
+            table_ids = list(roi_manager.tables.keys())
+            state_engine = TableStateEngine(table_ids=table_ids)
+            queue_monitor = QueueMonitor()
+        except Exception as e:
+            print(f"[Warning] Could not initialize ROIManager: {e}")
 
     meta = reader.get_metadata()
-    print(f"Resolution   : {meta['target_resolution']}")
-    print(f"Compute Dev  : {device_name}\n")
+    print(f"Resolution   : {meta['target_resolution']}\n")
     print("Keyboard Shortcuts:")
     print("  [SPACE] / [p] : Pause / Resume")
-    print("  [r]           : Restart video and reset tracking")
+    print("  [r]           : Restart video and reset state engines")
     print("  [+] / [-]     : Dynamically adjust frame sampling")
-    print("  [m]           : Toggle modes (raw -> detect -> track)")
+    print("  [m]           : Live cycle modes (RAW -> DETECT -> TRACK -> FULL)")
     print("  [q] or [ESC]  : Quit\n")
 
-    window_name = "DineSight AI - Integrated System"
+    window_name = "DineSight AI - Master Application"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window_name, args.width, args.height)
 
@@ -270,6 +281,8 @@ def main():
 
     try:
         while True:
+            now = time.time()
+
             if not paused:
                 success, frame, current_idx = reader.read_frame()
                 if not success or frame is None:
@@ -284,38 +297,47 @@ def main():
                 count = 0
                 total_unique = 0
                 inf_time_ms = 0.0
+                table_states = {}
+                queue_metrics = {}
 
-                # Branch by mode
+                # Mode branching
                 if current_mode == "detect":
                     if detector is None:
-                        detector = YOLODetector(
-                            model_path=args.model,
-                            conf_threshold=args.conf,
-                            target_classes=[0],
-                            device=args.device,
-                        )
+                        detector = YOLODetector(model_path=args.model, conf_threshold=args.conf, target_classes=[0], device=args.device)
                     dets = detector.detect(current_frame)
                     annotated = detector.draw_detections(annotated, dets)
                     count = len(dets)
                     inf_time_ms = detector.last_inference_time_ms
                     device_name = detector.device_name
 
-                elif current_mode == "track":
+                elif current_mode in ("track", "full"):
                     if tracker is None:
-                        tracker = ByteTracker(
-                            model_path=args.model,
-                            conf_threshold=args.conf,
-                            target_classes=[0],
-                            device=args.device,
-                        )
+                        tracker = ByteTracker(model_path=args.model, conf_threshold=args.conf, target_classes=[0], device=args.device)
                     trks = tracker.update(current_frame)
-                    annotated = tracker.draw_tracks(annotated, trks)
                     count = len(trks)
                     total_unique = tracker.total_unique_tracks_seen
                     inf_time_ms = tracker.last_track_time_ms
                     device_name = tracker.device_name
 
-                # Draw Unified Master HUD
+                    if current_mode == "full" and roi_manager and state_engine and queue_monitor:
+                        h, w = current_frame.shape[:2]
+                        spatial_map = roi_manager.associate_tracks(trks, frame_width=w, frame_height=h)
+                        table_states = state_engine.update(spatial_map["tables"], now=now)
+                        queue_metrics = queue_monitor.update(spatial_map["queue"], now=now)
+
+                        # Draw ROIs
+                        table_counts = {t_id: len(spatial_map["tables"].get(t_id, [])) for t_id in roi_manager.tables}
+                        annotated = roi_manager.draw_rois(
+                            annotated,
+                            table_states=table_states,
+                            table_occupant_counts=table_counts,
+                            queue_count=queue_metrics.get("current_queue_length", 0),
+                        )
+
+                    # Draw person tracking boxes
+                    annotated = tracker.draw_tracks(annotated, trks, show_center=True)
+
+                # Draw Master HUD
                 draw_master_hud(
                     frame=annotated,
                     mode=current_mode,
@@ -326,6 +348,8 @@ def main():
                     device_name=device_name,
                     count=count,
                     total_unique=total_unique,
+                    table_states=table_states,
+                    queue_metrics=queue_metrics,
                     frame_skip=reader.frame_skip,
                     paused=paused,
                 )
@@ -344,7 +368,11 @@ def main():
                 reader.restart()
                 if tracker:
                     tracker.reset()
-                print("[Playback] Rewound and tracker state reset.")
+                if state_engine:
+                    state_engine.reset()
+                if queue_monitor:
+                    queue_monitor.reset()
+                print("[Playback] Rewound and all state engines reset.")
             elif key in (ord('+'), ord('=')):
                 reader.frame_skip += 1
                 print(f"[Config] Frame skip: {reader.frame_skip}")
@@ -352,8 +380,7 @@ def main():
                 reader.frame_skip = max(1, reader.frame_skip - 1)
                 print(f"[Config] Frame skip: {reader.frame_skip}")
             elif key == ord('m'):
-                # Cycle modes dynamically: raw -> detect -> track -> raw
-                modes = ["raw", "detect", "track"]
+                modes = ["raw", "detect", "track", "full"]
                 current_mode = modes[(modes.index(current_mode) + 1) % len(modes)]
                 print(f"[Mode Switch] Active mode: {current_mode.upper()}")
 
@@ -364,4 +391,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
