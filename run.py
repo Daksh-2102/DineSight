@@ -38,6 +38,7 @@ from backend.app.core.tracker import ByteTracker
 from backend.app.core.roi_manager import ROIManager
 from backend.app.core.state_engine import TableStateEngine
 from backend.app.core.queue_monitor import QueueMonitor
+from backend.app.core.entrance_monitor import EntranceMonitor
 
 
 def draw_master_hud(
@@ -52,99 +53,174 @@ def draw_master_hud(
     total_unique: int,
     table_states: Optional[Dict[str, str]] = None,
     queue_metrics: Optional[Dict] = None,
+    entrance_metrics: Optional[Dict] = None,
     frame_skip: int = 1,
     paused: bool = False,
 ) -> None:
-    """Render a unified HUD header and footer across all operational modes."""
+    """
+    Render a clean, responsive, multi-card glassmorphism HUD dashboard.
+    Scales dynamically to fit any resolution without text overlapping or clipping.
+    """
     h, w = frame.shape[:2]
+    header_h = 68
 
-    # --- Header Bar ---
-    header_h = 65
+    # --- Header Glass Background ---
     overlay_top = frame.copy()
-    cv2.rectangle(overlay_top, (0, 0), (w, header_h), (16, 20, 26), -1)
-    cv2.addWeighted(overlay_top, 0.88, frame, 0.12, 0, frame)
+    cv2.rectangle(overlay_top, (0, 0), (w, header_h), (14, 18, 24), -1)
+    cv2.addWeighted(overlay_top, 0.90, frame, 0.10, 0, frame)
+
+    # Accent bottom divider line
+    cv2.line(frame, (0, header_h - 1), (w, header_h - 1), (35, 48, 64), 1, cv2.LINE_AA)
 
     mode_label = {
-        "raw": "RAW VIDEO INGESTION (Phase 1)",
-        "detect": "YOLOv8 DETECTION ONLY (Phase 2)",
-        "track": "YOLOv8 + BYTETRACK TRACKING (Phase 2)",
-        "full": "FULL RESTAURANT ANALYTICS (Phase 1+2+3)",
-    }.get(mode, mode.upper())
+        "raw": "RAW INGESTION",
+        "detect": "YOLO DETECTION",
+        "track": "BYTETRACK",
+        "full": "FULL ANALYTICS",
+    }.get(mode.lower(), mode.upper())
 
-    # Title & Mode
+    # --- 1. Left Section: Branding & System State ---
     cv2.putText(
         frame,
-        f"DineSight AI | {mode_label}",
-        (15, 26),
+        "DINESIGHT AI",
+        (14, 25),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.62,
+        0.54,
         (0, 215, 255),
         2,
         cv2.LINE_AA,
     )
 
-    # Device & Settings
-    dev_str = f"Device: {device_name}  |  Sampling: 1/{frame_skip}" if mode != "raw" else f"Mode: Passthrough  |  Sampling: 1/{frame_skip}"
-    dev_col = (0, 255, 127) if "GPU" in device_name else (200, 200, 200)
-    cv2.putText(frame, dev_str, (15, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.40, dev_col, 1, cv2.LINE_AA)
+    # Mode pill badge
+    (mw, mh), _ = cv2.getTextSize(mode_label, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
+    cv2.rectangle(frame, (142, 12), (142 + mw + 10, 12 + mh + 9), (28, 38, 52), -1)
+    cv2.rectangle(frame, (142, 12), (142 + mw + 10, 12 + mh + 9), (0, 215, 255), 1)
+    cv2.putText(
+        frame,
+        mode_label,
+        (147, 12 + mh + 4),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.36,
+        (0, 215, 255),
+        1,
+        cv2.LINE_AA,
+    )
 
-    # Performance & Object Telemetry
+    # Subline: Device, FPS, Sampling, Frame
     inf_fps = (1000.0 / inf_time_ms) if inf_time_ms > 0 else 0.0
+    sys_info = f"{device_name}  |  {pipeline_fps:.1f} FPS ({inf_time_ms:.1f}ms)  |  1/{frame_skip}  |  F:{frame_idx}/{total_frames}"
+    cv2.putText(
+        frame,
+        sys_info,
+        (14, 52),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.35,
+        (165, 175, 190),
+        1,
+        cv2.LINE_AA,
+    )
+
+    # --- 2. Center Section: Dining Room Occupancy Card ---
     if mode == "full" and table_states is not None:
-        total_tables = len(table_states)
-        occ = sum(1 for s in table_states.values() if s != "VACANT")
-        pct = int((occ / total_tables) * 100) if total_tables > 0 else 0
-        perf_line = f"Inf: {inf_time_ms:4.1f}ms ({inf_fps:3.0f} FPS)  |  Pipeline: {pipeline_fps:4.1f} FPS  |  People: {count}"
-        count_line = f"Occupancy: {occ}/{total_tables} ({pct}%)  |  Queue: {queue_metrics.get('current_queue_length', 0)} waiting"
+        total_tbl = len(table_states)
+        dining_cnt = sum(1 for s in table_states.values() if s == "DINING")
+        waiting_cnt = sum(1 for s in table_states.values() if s in ("WAITING_FOR_FOOD", "ESTIMATED_WAITING"))
+        occupied_cnt = sum(1 for s in table_states.values() if s not in ("VACANT", "NONE"))
+        vacant_cnt = total_tbl - occupied_cnt
+        occ_pct = int((occupied_cnt / total_tbl) * 100) if total_tbl > 0 else 0
+
+        card_cx = int(w * 0.40) if w >= 800 else int(w * 0.38)
+        cv2.putText(
+            frame,
+            f"TABLES: {occupied_cnt}/{total_tbl} ({occ_pct}%) Seated",
+            (card_cx, 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            (240, 240, 240),
+            1,
+            cv2.LINE_AA,
+        )
+
+        status_breakdown = f"{dining_cnt} Dining  |  {waiting_cnt} Waiting  |  {vacant_cnt} Vacant"
+        cv2.putText(
+            frame,
+            status_breakdown,
+            (card_cx, 52),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.36,
+            (140, 220, 170),
+            1,
+            cv2.LINE_AA,
+        )
     elif mode == "track":
-        perf_line = f"Inf: {inf_time_ms:4.1f}ms ({inf_fps:3.0f} FPS)  |  Pipeline: {pipeline_fps:4.1f} FPS"
-        count_line = f"Active: {count}  |  Total Seen: {total_unique}  |  Frame: {frame_idx}/{total_frames}"
+        card_cx = int(w * 0.40)
+        cv2.putText(frame, f"ACTIVE PERSONS: {count}", (card_cx, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (240, 240, 240), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"TOTAL OBSERVED: {total_unique}", (card_cx, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 220, 170), 1, cv2.LINE_AA)
     elif mode == "detect":
-        perf_line = f"Inf: {inf_time_ms:4.1f}ms ({inf_fps:3.0f} FPS)  |  Pipeline: {pipeline_fps:4.1f} FPS"
-        count_line = f"People Detected: {count}  |  Frame: {frame_idx}/{total_frames}"
-    else:  # raw
-        perf_line = f"Pipeline: {pipeline_fps:4.1f} FPS"
-        count_line = f"Frame: {frame_idx}/{total_frames}" if total_frames > 0 else f"Frame: {frame_idx}"
+        card_cx = int(w * 0.40)
+        cv2.putText(frame, f"DETECTED PERSONS: {count}", (card_cx, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (240, 240, 240), 1, cv2.LINE_AA)
+        cv2.putText(frame, "YOLOv8 Real-Time Inference", (card_cx, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 220, 170), 1, cv2.LINE_AA)
 
-    cv2.putText(
-        frame,
-        perf_line,
-        (w - 650 if w >= 1000 else 15, 26 if w >= 1000 else 90),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.44,
-        (220, 220, 220),
-        1,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        frame,
-        count_line,
-        (w - 650 if w >= 1000 else 15, 50 if w >= 1000 else 112),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.42,
-        (180, 215, 240),
-        1,
-        cv2.LINE_AA,
-    )
+    # --- 3. Right Section: Service & Footfall Operations Card ---
+    if mode == "full":
+        right_x = max(int(w * 0.70), w - 265)
+        q_len = (queue_metrics or {}).get("current_queue_length", 0)
+        ent_in = (entrance_metrics or {}).get("total_entries", 0)
+        ent_out = (entrance_metrics or {}).get("total_exits", 0)
+        ent_net = (entrance_metrics or {}).get("net_occupants", 0)
 
-    # --- Footer Bar ---
-    footer_h = 30
+        cv2.putText(
+            frame,
+            f"QUEUE: {q_len} waiting  |  PEOPLE: {count}",
+            (right_x, 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.40,
+            (255, 215, 140),
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            f"FOOTFALL: IN {ent_in}  |  OUT {ent_out}  (Net {ent_net})",
+            (right_x, 52),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.36,
+            (200, 220, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+    # --- 4. Footer Bar ---
+    footer_h = 26
     overlay_bot = frame.copy()
-    cv2.rectangle(overlay_bot, (0, h - footer_h), (w, h), (14, 16, 22), -1)
-    cv2.addWeighted(overlay_bot, 0.88, frame, 0.12, 0, frame)
+    cv2.rectangle(overlay_bot, (0, h - footer_h), (w, h), (14, 18, 24), -1)
+    cv2.addWeighted(overlay_bot, 0.90, frame, 0.10, 0, frame)
+    cv2.line(frame, (0, h - footer_h), (w, h - footer_h), (35, 48, 64), 1, cv2.LINE_AA)
 
+    # Status indicator dot + text
     status_str = "PAUSED [SPACE to resume]" if paused else "ACTIVE [SPACE to pause]"
     status_col = (0, 165, 255) if paused else (0, 255, 127)
-    cv2.putText(frame, status_str, (15, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.44, status_col, 1, cv2.LINE_AA)
+    cv2.circle(frame, (20, h - footer_h // 2), 4, status_col, -1, cv2.LINE_AA)
+    cv2.putText(
+        frame,
+        status_str,
+        (30, h - 8),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.36,
+        status_col,
+        1,
+        cv2.LINE_AA,
+    )
 
-    tips = "[SPACE]: Pause  |  [r]: Restart  |  [+/-]: Sampling  |  [m]: Toggle Mode  |  [q]: Quit"
+    tips = "[SPACE]: Pause  |  [r]: Reset  |  [+/-]: Sampling  |  [m]: Mode  |  [q]: Quit"
+    (tip_w, _), _ = cv2.getTextSize(tips, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
     cv2.putText(
         frame,
         tips,
-        (w - 530 if w >= 950 else 220, h - 9),
+        (max(int(w * 0.40), w - tip_w - 15), h - 8),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.42,
-        (170, 170, 170),
+        0.35,
+        (160, 170, 180),
         1,
         cv2.LINE_AA,
     )
@@ -188,8 +264,33 @@ def main():
     parser.add_argument(
         "--conf",
         type=float,
-        default=0.35,
-        help="Confidence threshold for person detection",
+        default=0.25,
+        help="Confidence threshold for person detection (default: 0.25)",
+    )
+    parser.add_argument(
+        "--iou",
+        type=float,
+        default=0.50,
+        help="IoU threshold for NMS bounding box suppression (default: 0.50)",
+    )
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=640,
+        help="Inference image size (e.g. 640 or 800, default: 640)",
+    )
+    parser.add_argument(
+        "--tracker-config",
+        type=str,
+        default="config/bytetrack_dinesight.yaml" if os.path.exists("config/bytetrack_dinesight.yaml") else "bytetrack.yaml",
+        help="Path to ByteTrack YAML configuration file",
+    )
+    parser.add_argument(
+        "--assoc-mode",
+        type=str,
+        default="hybrid",
+        choices=["hybrid", "bbox_overlap", "bottom_center", "center"],
+        help="Spatial association mode for mapping persons to tables: 'hybrid' (default), 'bbox_overlap', 'bottom_center'",
     )
     parser.add_argument(
         "--width",
@@ -216,9 +317,25 @@ def main():
         help="Inference device: 'cpu', 'cuda', or None (auto-detect)",
     )
     parser.add_argument(
+        "--tableware",
+        action="store_true",
+        help="Enable COCO tableware detection (bottles, cups, bowls) for dining activity heuristics",
+    )
+    parser.add_argument(
         "--no-loop",
         action="store_true",
         help="Disable automatic looping when video ends",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without displaying a graphical window (useful for benchmarking)",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=0,
+        help="Maximum frames to process before exiting (0 = infinite)",
     )
 
     args = parser.parse_args()
@@ -248,15 +365,24 @@ def main():
     roi_manager = None
     state_engine = None
     queue_monitor = None
+    entrance_monitor = None
     device_name = "CPU"
 
     # Always initialize ROI and state engines for full mode
     if os.path.exists(args.rois):
         try:
-            roi_manager = ROIManager(config_path=args.rois, point_mode="bottom_center")
+            roi_manager = ROIManager(
+                config_path=args.rois,
+                point_mode="bottom_center",
+                association_mode=args.assoc_mode,
+            )
             table_ids = list(roi_manager.tables.keys())
             state_engine = TableStateEngine(table_ids=table_ids)
             queue_monitor = QueueMonitor()
+            tripwire_line = None
+            if roi_manager.entrance_region and roi_manager.entrance_region.tripwire_normalized:
+                tripwire_line = roi_manager.entrance_region.tripwire_normalized
+            entrance_monitor = EntranceMonitor(tripwire_line=tripwire_line)
         except Exception as e:
             print(f"[Warning] Could not initialize ROIManager: {e}")
 
@@ -270,8 +396,9 @@ def main():
     print("  [q] or [ESC]  : Quit\n")
 
     window_name = "DineSight AI - Master Application"
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, args.width, args.height)
+    if not args.headless:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, args.width, args.height)
 
     delay_ms = max(1, int(1000.0 / (reader.source_fps or 30.0)))
     paused = False
@@ -299,11 +426,19 @@ def main():
                 inf_time_ms = 0.0
                 table_states = {}
                 queue_metrics = {}
+                entrance_metrics = {}
 
                 # Mode branching
                 if current_mode == "detect":
                     if detector is None:
-                        detector = YOLODetector(model_path=args.model, conf_threshold=args.conf, target_classes=[0], device=args.device)
+                        detector = YOLODetector(
+                            model_path=args.model,
+                            conf_threshold=args.conf,
+                            iou_threshold=args.iou,
+                            imgsz=args.imgsz,
+                            target_classes=[0],
+                            device=args.device,
+                        )
                     dets = detector.detect(current_frame)
                     annotated = detector.draw_detections(annotated, dets)
                     count = len(dets)
@@ -312,18 +447,49 @@ def main():
 
                 elif current_mode in ("track", "full"):
                     if tracker is None:
-                        tracker = ByteTracker(model_path=args.model, conf_threshold=args.conf, target_classes=[0], device=args.device)
+                        include_tw = (current_mode == "full" or args.tableware)
+                        tracker = ByteTracker(
+                            model_path=args.model,
+                            conf_threshold=args.conf,
+                            tracker_type=args.tracker_config,
+                            imgsz=args.imgsz,
+                            include_tableware=include_tw,
+                            device=args.device,
+                        )
                     trks = tracker.update(current_frame)
-                    count = len(trks)
-                    total_unique = tracker.total_unique_tracks_seen
                     inf_time_ms = tracker.last_track_time_ms
                     device_name = tracker.device_name
 
                     if current_mode == "full" and roi_manager and state_engine and queue_monitor:
                         h, w = current_frame.shape[:2]
-                        spatial_map = roi_manager.associate_tracks(trks, frame_width=w, frame_height=h)
-                        table_states = state_engine.update(spatial_map["tables"], now=now)
-                        queue_metrics = queue_monitor.update(spatial_map["queue"], now=now)
+                        # Separate person tracks from tableware items
+                        person_trks, tableware_items = ByteTracker.separate_tracks(trks)
+                        count = len(person_trks)
+                        total_unique = tracker.total_unique_tracks_seen
+
+                        spatial_map = roi_manager.associate_tracks(person_trks, frame_width=w, frame_height=h)
+                        table_tableware = roi_manager.associate_tableware(tableware_items, frame_width=w, frame_height=h)
+
+                        table_states = state_engine.update(
+                            spatial_map["tables"],
+                            table_tableware=table_tableware,
+                            now=now,
+                        )
+                        queue_metrics = queue_monitor.update(
+                            queue_tracks=spatial_map["queue"],
+                            counter_tracks=spatial_map.get("counter", []),
+                            now=now,
+                        )
+
+                        if entrance_monitor:
+                            e_poly = roi_manager.entrance_region.get_pixel_polygon(w, h) if roi_manager.entrance_region else None
+                            entrance_metrics = entrance_monitor.update(
+                                tracks=person_trks,
+                                frame_width=w,
+                                frame_height=h,
+                                now=now,
+                                entrance_polygon=e_poly,
+                            )
 
                         # Draw ROIs
                         table_counts = {t_id: len(spatial_map["tables"].get(t_id, [])) for t_id in roi_manager.tables}
@@ -332,7 +498,16 @@ def main():
                             table_states=table_states,
                             table_occupant_counts=table_counts,
                             queue_count=queue_metrics.get("current_queue_length", 0),
+                            counter_count=len(spatial_map.get("counter", [])),
+                            entrance_metrics=entrance_metrics,
+                            table_tableware=table_tableware,
                         )
+
+                        if entrance_monitor:
+                            annotated = entrance_monitor.draw_entrance_visuals(annotated)
+                    else:
+                        count = len(trks)
+                        total_unique = tracker.total_unique_tracks_seen
 
                     # Draw person tracking boxes
                     annotated = tracker.draw_tracks(annotated, trks, show_center=True)
@@ -350,43 +525,53 @@ def main():
                     total_unique=total_unique,
                     table_states=table_states,
                     queue_metrics=queue_metrics,
+                    entrance_metrics=entrance_metrics,
                     frame_skip=reader.frame_skip,
                     paused=paused,
                 )
 
-                cv2.imshow(window_name, annotated)
+                if not args.headless:
+                    cv2.imshow(window_name, annotated)
 
-            # Keyboard controls
-            key = cv2.waitKey(delay_ms if not paused else 30) & 0xFF
-            if key in (ord('q'), 27):
-                print("\n[DineSight AI] Exiting application.")
+            if args.max_frames > 0 and current_idx >= args.max_frames:
+                print(f"\n[DineSight AI] Reached target max frames ({args.max_frames}). Completed.")
                 break
-            elif key in (ord('p'), ord(' ')):
-                paused = not paused
-                print(f"[Playback] {'PAUSED' if paused else 'RESUMED'}")
-            elif key == ord('r'):
-                reader.restart()
-                if tracker:
-                    tracker.reset()
-                if state_engine:
-                    state_engine.reset()
-                if queue_monitor:
-                    queue_monitor.reset()
-                print("[Playback] Rewound and all state engines reset.")
-            elif key in (ord('+'), ord('=')):
-                reader.frame_skip += 1
-                print(f"[Config] Frame skip: {reader.frame_skip}")
-            elif key in (ord('-'), ord('_')):
-                reader.frame_skip = max(1, reader.frame_skip - 1)
-                print(f"[Config] Frame skip: {reader.frame_skip}")
-            elif key == ord('m'):
-                modes = ["raw", "detect", "track", "full"]
-                current_mode = modes[(modes.index(current_mode) + 1) % len(modes)]
-                print(f"[Mode Switch] Active mode: {current_mode.upper()}")
+
+            # Keyboard controls (GUI mode only)
+            if not args.headless:
+                key = cv2.waitKey(delay_ms if not paused else 30) & 0xFF
+                if key in (ord('q'), 27):
+                    print("\n[DineSight AI] Exiting application.")
+                    break
+                elif key in (ord('p'), ord(' ')):
+                    paused = not paused
+                    print(f"[Playback] {'PAUSED' if paused else 'RESUMED'}")
+                elif key == ord('r'):
+                    reader.restart()
+                    if tracker:
+                        tracker.reset()
+                    if state_engine:
+                        state_engine.reset()
+                    if queue_monitor:
+                        queue_monitor.reset()
+                    if entrance_monitor:
+                        entrance_monitor.reset()
+                    print("[Playback] Rewound and all state engines reset.")
+                elif key in (ord('+'), ord('=')):
+                    reader.frame_skip += 1
+                    print(f"[Config] Frame skip: {reader.frame_skip}")
+                elif key in (ord('-'), ord('_')):
+                    reader.frame_skip = max(1, reader.frame_skip - 1)
+                    print(f"[Config] Frame skip: {reader.frame_skip}")
+                elif key == ord('m'):
+                    modes = ["raw", "detect", "track", "full"]
+                    current_mode = modes[(modes.index(current_mode) + 1) % len(modes)]
+                    print(f"[Mode Switch] Active mode: {current_mode.upper()}")
 
     finally:
         reader.release()
-        cv2.destroyAllWindows()
+        if not args.headless:
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

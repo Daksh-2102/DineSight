@@ -1,0 +1,15 @@
+# DineSight AI - Calibrated ByteTrack Configuration
+# ===================================================
+# Optimized for restaurant CCTV monitoring:
+# - Two-stage association allows tracking occluded seated patrons (conf >= 0.10)
+# - Extended track_buffer (60 frames ~ 2.4s @ 25fps) maintains track persistence
+#   when waitstaff or other patrons briefly occlude seated tables.
+# - High match_thresh (0.80) prevents identity jumping between adjacent patrons.
+
+tracker_type: bytetrack
+track_high_thresh: 0.25
+track_low_thresh: 0.10
+new_track_thresh: 0.20
+track_buffer: 60
+match_thresh: 0.80
+fuse_score: True

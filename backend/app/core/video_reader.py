@@ -245,7 +245,12 @@ class VideoReader:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.release()
 
-    def run_preview(self, window_name: str = "DineSight AI - Video Ingestion Preview") -> None:
+    def run_preview(
+        self,
+        window_name: str = "DineSight AI - Video Ingestion Preview",
+        headless: bool = False,
+        max_frames: int = 0,
+    ) -> None:
         """
         Run an interactive window displaying the video stream with HUD telemetry.
 
@@ -261,15 +266,16 @@ class VideoReader:
         for k, v in meta.items():
             print(f"  - {k}: {v}")
 
-        print("\nKeyboard Controls:")
-        print("  [q] or [ESC]  : Quit")
-        print("  [SPACE] / [p] : Pause / Resume")
-        print("  [r]           : Restart video")
-        print("  [+] / [-]     : Increase / Decrease frame skip")
+        if not headless:
+            print("\nKeyboard Controls:")
+            print("  [q] or [ESC]  : Quit")
+            print("  [SPACE] / [p] : Pause / Resume")
+            print("  [r]           : Restart video")
+            print("  [+] / [-]     : Increase / Decrease frame skip")
 
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        if self.target_size:
-            cv2.resizeWindow(window_name, self.target_size[0], self.target_size[1])
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            if self.target_size:
+                cv2.resizeWindow(window_name, self.target_size[0], self.target_size[1])
 
         paused = False
         current_frame: Optional[np.ndarray] = None
@@ -293,30 +299,37 @@ class VideoReader:
                 if current_frame is not None:
                     display_frame = current_frame.copy()
                     self._draw_hud(display_frame, current_idx, paused)
-                    cv2.imshow(window_name, display_frame)
+                    if not headless:
+                        cv2.imshow(window_name, display_frame)
+
+                if max_frames > 0 and current_idx >= max_frames:
+                    print(f"\n[VideoReader] Reached target max frames ({max_frames}). Completed.")
+                    break
 
                 # Handle keyboard input
-                key = cv2.waitKey(delay_ms if not paused else 30) & 0xFF
-                if key in (ord('q'), 27):  # 'q' or ESC
-                    print("\n[VideoReader] Exiting preview by user request.")
-                    break
-                elif key in (ord('p'), ord(' ')):  # 'p' or SPACE
-                    paused = not paused
-                    state_str = "PAUSED" if paused else "RESUMED"
-                    print(f"[Playback] {state_str}")
-                elif key == ord('r'):  # 'r'
-                    self.restart()
-                    print("[Playback] Rewound to beginning.")
-                elif key in (ord('+'), ord('=')):  # '+'
-                    self.frame_skip += 1
-                    print(f"[Config] Frame skip increased to: {self.frame_skip}")
-                elif key in (ord('-'), ord('_')):  # '-'
-                    self.frame_skip = max(1, self.frame_skip - 1)
-                    print(f"[Config] Frame skip decreased to: {self.frame_skip}")
+                if not headless:
+                    key = cv2.waitKey(delay_ms if not paused else 30) & 0xFF
+                    if key in (ord('q'), 27):  # 'q' or ESC
+                        print("\n[VideoReader] Exiting preview by user request.")
+                        break
+                    elif key in (ord('p'), ord(' ')):  # 'p' or SPACE
+                        paused = not paused
+                        state_str = "PAUSED" if paused else "RESUMED"
+                        print(f"[Playback] {state_str}")
+                    elif key == ord('r'):  # 'r'
+                        self.restart()
+                        print("[Playback] Rewound to beginning.")
+                    elif key in (ord('+'), ord('=')):  # '+'
+                        self.frame_skip += 1
+                        print(f"[Config] Frame skip increased to: {self.frame_skip}")
+                    elif key in (ord('-'), ord('_')):  # '-'
+                        self.frame_skip = max(1, self.frame_skip - 1)
+                        print(f"[Config] Frame skip decreased to: {self.frame_skip}")
 
         finally:
             self.release()
-            cv2.destroyAllWindows()
+            if not headless:
+                cv2.destroyAllWindows()
 
     def _draw_hud(self, frame: np.ndarray, frame_idx: int, paused: bool) -> None:
         """Draw a professional semi-transparent heads-up display (HUD) on the frame."""

@@ -2,26 +2,34 @@
 DineSight AI - Table-State Recognition Engine (Module 3B)
 =========================================================
 Implements the finite state machine (FSM) and temporal smoothing rules
-for classifying dining table states.
+for classifying dining table states with grounded visual evidence.
 
-Required States:
-1. VACANT           : No patrons associated with the table.
-2. OCCUPIED         : Patrons confirmed seated after dwell-time threshold.
-3. WAITING_FOR_FOOD : Occupied, but no tableware/food items detected on table.
-4. DINING           : Occupied, with tableware (cups, bowls) visually detected.
-
-Key Engineering Features:
-- Timestamp-based dwell time (prevents passers-by from triggering occupancy).
-- Timestamp-based release period (grace period for temporary occlusion/motion).
-- Temporal smoothing: Prevents rapid oscillation/flickering between states.
-- Extensible heuristic: Treats tableware as estimated visual evidence rather than
-  claiming absolute proof of dining.
-- Ephemeral in-memory tracking: No database persistence in this module.
+Architecture:
+- Decouples Primary Ground-Truth State (VACANT, OCCUPIED, UNKNOWN) from
+  Estimated Secondary Activity (UNKNOWN, ESTIMATED_WAITING, ESTIMATED_DINING).
+- Does not jump to WAITING_FOR_FOOD upon occupancy unless verified temporal
+  thresholds or order cues exist.
+- Dwell-time filtering prevents transient passers-by from falsely occupying tables.
+- Release-time grace period prevents momentary occlusions from dropping occupancy.
+- Full backward compatibility for existing callers expecting string status values.
 """
 
 import time
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
+
+
+class PrimaryState(str, Enum):
+    VACANT = "VACANT"
+    OCCUPIED = "OCCUPIED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ActivityState(str, Enum):
+    NONE = "NONE"
+    UNKNOWN = "UNKNOWN"
+    ESTIMATED_WAITING = "ESTIMATED_WAITING"
+    ESTIMATED_DINING = "ESTIMATED_DINING"
 
 
 class TableState(str, Enum):
@@ -39,21 +47,27 @@ class TableSession:
     def __init__(
         self,
         table_id: str,
-        dwell_time_sec: float = 2.0,
-        release_time_sec: float = 2.5,
+        dwell_time_sec: float = 2.5,
+        release_time_sec: float = 3.0,
+        waiting_threshold_sec: float = 5.0,
         activity_smoothing_sec: float = 2.0,
     ):
-        self.table_id = table_id
+        self.table_id = str(table_id)
         self.dwell_time_sec = float(dwell_time_sec)
         self.release_time_sec = float(release_time_sec)
+        self.waiting_threshold_sec = float(waiting_threshold_sec)
         self.activity_smoothing_sec = float(activity_smoothing_sec)
 
-        # Current stabilized state
+        # Ground-truth primary state
+        self.primary_state: PrimaryState = PrimaryState.VACANT
+        self.activity_state: ActivityState = ActivityState.NONE
+
+        # Consolidated display state (for backward compatibility)
         self.current_state: TableState = TableState.VACANT
         self.last_state_change_time: float = time.time()
 
         # Dwell & Release temporal candidate tracking
-        self.candidate_state: Optional[TableState] = None
+        self.candidate_state: Optional[PrimaryState] = None
         self.candidate_start_time: float = 0.0
 
         # Occupant tracking
@@ -69,6 +83,8 @@ class TableSession:
 
     def reset(self) -> None:
         """Reset table state back to VACANT baseline."""
+        self.primary_state = PrimaryState.VACANT
+        self.activity_state = ActivityState.NONE
         self.current_state = TableState.VACANT
         self.last_state_change_time = time.time()
         self.candidate_state = None
@@ -78,6 +94,8 @@ class TableSession:
         self.last_seen_occupant_time = 0.0
         self.occupancy_start_time = None
         self.tableware_present = False
+        self.tableware_candidate_val = False
+        self.tableware_candidate_time = 0.0
 
     def update(
         self,
@@ -92,7 +110,9 @@ class TableSession:
             now = time.time()
 
         # 1. Update current frame occupant IDs
-        self.current_frame_occupant_ids = {trk["track_id"] for trk in occupant_tracks if "track_id" in trk}
+        self.current_frame_occupant_ids = {
+            trk["track_id"] for trk in occupant_tracks if "track_id" in trk
+        }
         has_people_now = len(self.current_frame_occupant_ids) > 0
 
         # Check tableware evidence
@@ -106,44 +126,65 @@ class TableSession:
             self.tableware_present = self.tableware_candidate_val
 
         # 3. Finite State Machine Transitions
-        if self.current_state == TableState.VACANT:
+        if self.primary_state == PrimaryState.VACANT:
             if has_people_now:
-                # A person is detected inside the table ROI.
-                # Must stay inside for dwell_time_sec to confirm OCCUPIED.
-                if self.candidate_state != TableState.OCCUPIED:
-                    self.candidate_state = TableState.OCCUPIED
+                # Patrons detected inside table ROI - must satisfy dwell time
+                if self.candidate_state != PrimaryState.OCCUPIED:
+                    self.candidate_state = PrimaryState.OCCUPIED
                     self.candidate_start_time = now
                 elif (now - self.candidate_start_time) >= self.dwell_time_sec:
-                    # Dwell time satisfied! Confirm transition to active occupied state
-                    target_state = TableState.DINING if self.tableware_present else TableState.WAITING_FOR_FOOD
-                    self._transition_to(target_state, now)
+                    # Dwell threshold satisfied! Confirm occupancy
+                    self.primary_state = PrimaryState.OCCUPIED
                     self.occupancy_start_time = now
+                    self.last_seen_occupant_time = now
                     self.confirmed_occupant_ids = set(self.current_frame_occupant_ids)
+                    self.candidate_state = None
+
+                    # Determine initial activity state
+                    if self.tableware_present:
+                        self.activity_state = ActivityState.ESTIMATED_DINING
+                        self._transition_to(TableState.DINING, now)
+                    elif (now - self.candidate_start_time) >= (self.dwell_time_sec + self.waiting_threshold_sec):
+                        self.activity_state = ActivityState.ESTIMATED_WAITING
+                        self._transition_to(TableState.WAITING_FOR_FOOD, now)
+                    else:
+                        self.activity_state = ActivityState.UNKNOWN
+                        self._transition_to(TableState.OCCUPIED, now)
             else:
-                # Table remains vacant
                 self.candidate_state = None
 
         else:
-            # Table is currently in an OCCUPIED-like state (OCCUPIED, WAITING_FOR_FOOD, or DINING)
+            # Table is currently OCCUPIED
             if has_people_now:
-                # Patrons are actively present
                 self.last_seen_occupant_time = now
                 self.confirmed_occupant_ids.update(self.current_frame_occupant_ids)
                 self.candidate_state = None  # Clear any pending release
 
-                # Determine activity sub-state (Dining vs Waiting for Food)
-                target_state = TableState.DINING if self.tableware_present else TableState.WAITING_FOR_FOOD
-                if self.current_state in (TableState.OCCUPIED, TableState.WAITING_FOR_FOOD, TableState.DINING):
-                    if self.current_state != target_state:
-                        self._transition_to(target_state, now)
+                # Determine activity state with grounded evidence
+                if self.tableware_present:
+                    self.activity_state = ActivityState.ESTIMATED_DINING
+                    if self.current_state != TableState.DINING:
+                        self._transition_to(TableState.DINING, now)
+                elif self.occupancy_start_time and (now - self.occupancy_start_time) >= self.waiting_threshold_sec:
+                    # Seated for sustained duration without tableware
+                    self.activity_state = ActivityState.ESTIMATED_WAITING
+                    if self.current_state != TableState.WAITING_FOR_FOOD:
+                        self._transition_to(TableState.WAITING_FOR_FOOD, now)
+                else:
+                    # Newly seated / occupied without dining cues
+                    self.activity_state = ActivityState.UNKNOWN
+                    if self.current_state not in (TableState.OCCUPIED, TableState.WAITING_FOR_FOOD, TableState.DINING):
+                        self._transition_to(TableState.OCCUPIED, now)
 
             else:
                 # No patrons detected in this frame (could be temporary occlusion or departure)
-                if self.candidate_state != TableState.VACANT:
-                    self.candidate_state = TableState.VACANT
+                if self.candidate_state != PrimaryState.VACANT:
+                    self.candidate_state = PrimaryState.VACANT
                     self.candidate_start_time = now
                 elif (now - self.candidate_start_time) >= self.release_time_sec:
                     # Release grace period expired! Confirm table is VACANT
+                    self.primary_state = PrimaryState.VACANT
+                    self.activity_state = ActivityState.NONE
                     self._transition_to(TableState.VACANT, now)
                     self.occupancy_start_time = None
                     self.confirmed_occupant_ids.clear()
@@ -152,10 +193,9 @@ class TableSession:
         return self.current_state
 
     def _transition_to(self, new_state: TableState, timestamp: float) -> None:
-        """Internal helper to record state change and reset candidate."""
+        """Internal helper to record state change."""
         self.current_state = new_state
         self.last_state_change_time = timestamp
-        self.candidate_state = None
 
     def get_status(self, now: Optional[float] = None) -> Dict:
         """Return a structured summary of this table's operational state."""
@@ -163,7 +203,7 @@ class TableSession:
             now = time.time()
 
         occupied_duration = 0.0
-        if self.occupancy_start_time is not None and self.current_state != TableState.VACANT:
+        if self.occupancy_start_time is not None and self.primary_state == PrimaryState.OCCUPIED:
             occupied_duration = round(now - self.occupancy_start_time, 1)
 
         state_age = round(now - self.last_state_change_time, 1)
@@ -171,12 +211,14 @@ class TableSession:
         return {
             "table_id": self.table_id,
             "state": self.current_state.value,
-            "occupant_count": len(self.current_frame_occupant_ids) if self.current_state != TableState.VACANT else 0,
-            "occupant_ids": sorted(list(self.confirmed_occupant_ids if self.current_state != TableState.VACANT else [])),
+            "primary_state": self.primary_state.value,
+            "activity_state": self.activity_state.value,
+            "occupant_count": len(self.current_frame_occupant_ids) if self.primary_state == PrimaryState.OCCUPIED else 0,
+            "occupant_ids": sorted(list(self.confirmed_occupant_ids if self.primary_state == PrimaryState.OCCUPIED else [])),
             "occupied_duration_sec": occupied_duration,
             "state_age_sec": state_age,
             "tableware_detected": self.tableware_present,
-            "is_occupied": self.current_state != TableState.VACANT,
+            "is_occupied": self.primary_state == PrimaryState.OCCUPIED,
         }
 
 
@@ -188,8 +230,9 @@ class TableStateEngine:
     def __init__(
         self,
         table_ids: List[str],
-        dwell_time_sec: float = 2.0,
-        release_time_sec: float = 2.5,
+        dwell_time_sec: float = 2.5,
+        release_time_sec: float = 3.0,
+        waiting_threshold_sec: float = 5.0,
         activity_smoothing_sec: float = 2.0,
     ):
         self.tables: Dict[str, TableSession] = {
@@ -197,6 +240,7 @@ class TableStateEngine:
                 table_id=t_id,
                 dwell_time_sec=dwell_time_sec,
                 release_time_sec=release_time_sec,
+                waiting_threshold_sec=waiting_threshold_sec,
                 activity_smoothing_sec=activity_smoothing_sec,
             )
             for t_id in table_ids

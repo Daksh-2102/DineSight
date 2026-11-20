@@ -89,6 +89,37 @@ class TestPhase3Integration(unittest.TestCase):
         self.assertGreater(total_tracked_people_seen, 0, "Expected at least 1 person to be tracked across 10 frames")
         print(f" [PASS] Test 1: Complete Phase 3 end-to-end pipeline executed successfully over {processed} frames!")
 
+    def test_02_master_hud_rendering(self):
+        """Test that redesigned master HUD renders cleanly across resolutions and modes."""
+        import run
+
+        resolutions = [(848, 480), (1280, 720)]
+        modes = ["raw", "detect", "track", "full"]
+
+        for w, h in resolutions:
+            for mode in modes:
+                canvas = np.zeros((h, w, 3), dtype=np.uint8)
+                run.draw_master_hud(
+                    frame=canvas,
+                    mode=mode,
+                    frame_idx=50,
+                    total_frames=1000,
+                    pipeline_fps=24.5,
+                    inf_time_ms=32.0,
+                    device_name="CPU",
+                    count=4,
+                    total_unique=8,
+                    table_states={"table_1": "OCCUPIED", "table_2": "DINING"},
+                    queue_metrics={"current_queue_length": 1},
+                    entrance_metrics={"total_entries": 3, "total_exits": 1, "net_occupants": 2},
+                    frame_skip=1,
+                    paused=False,
+                )
+                self.assertEqual(canvas.shape, (h, w, 3))
+                self.assertGreater(np.sum(canvas), 0, f"HUD drawing failed for mode {mode} at {w}x{h}")
+
+        print(" [PASS] Test 2: Master HUD multi-resolution and multi-mode rendering verified")
+
 
 if __name__ == "__main__":
     print("\nRunning DineSight AI - Phase 3 Integration Test Suite...\n" + "=" * 55)

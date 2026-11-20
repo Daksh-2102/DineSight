@@ -108,6 +108,36 @@ class TestQueueMonitor(unittest.TestCase):
 
         print(" [PASS] Test 5: Duplicate person counting prevention verified")
 
+    def test_06_counter_and_queue_distinction(self):
+        """Test distinction between customer at service counter vs waiting in queue."""
+        monitor = QueueMonitor(min_dwell_sec=1.0)
+        counter_person = [{"track_id": 10}]
+        queue_person = [{"track_id": 20}]
+
+        metrics = monitor.update(
+            queue_tracks=queue_person,
+            counter_tracks=counter_person,
+            now=10.0,
+        )
+
+        self.assertEqual(metrics["counter_count"], 1)
+        self.assertEqual(metrics["queue_line_count"], 1)
+        self.assertEqual(metrics["total_waiting_count"], 2)
+        print(" [PASS] Test 6: Counter vs queue distinction verified")
+
+    def test_07_service_duration_tracking(self):
+        """Test transaction service duration tracking at the counter."""
+        monitor = QueueMonitor(min_dwell_sec=1.0)
+        counter_person = [{"track_id": 15}]
+
+        # Service starts at t=100.0s
+        monitor.update(queue_tracks=[], counter_tracks=counter_person, now=100.0)
+        # Service continues at t=108.5s (8.5 seconds elapsed)
+        m = monitor.update(queue_tracks=[], counter_tracks=counter_person, now=108.5)
+
+        self.assertAlmostEqual(m["current_service_time_sec"], 8.5, places=1)
+        print(" [PASS] Test 7: Service counter duration tracking verified")
+
 
 if __name__ == "__main__":
     print("\nRunning DineSight AI - Phase 3C Queue Monitor Test Suite...\n" + "=" * 55)

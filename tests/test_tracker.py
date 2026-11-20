@@ -38,10 +38,15 @@ class TestByteTracker(unittest.TestCase):
 
     def test_01_tracker_initialization(self):
         """Test ByteTracker initialization."""
-        tracker = ByteTracker(model_path=self.MODEL_PATH)
-        self.assertIsNotNone(tracker.model)
-        self.assertEqual(tracker.tracker_type, "bytetrack.yaml")
-        print(" [PASS] Test 1: ByteTracker initialization verified")
+        tracker_default = ByteTracker(model_path=self.MODEL_PATH)
+        self.assertIsNotNone(tracker_default.model)
+        self.assertTrue(
+            tracker_default.tracker_type in ("config/bytetrack_dinesight.yaml", "bytetrack.yaml")
+        )
+
+        tracker_custom = ByteTracker(model_path=self.MODEL_PATH, tracker_type="bytetrack.yaml")
+        self.assertEqual(tracker_custom.tracker_type, "bytetrack.yaml")
+        print(" [PASS] Test 1: ByteTracker initialization verified (default & explicit config)")
 
     def test_02_empty_frame_handling(self):
         """Test that a blank frame returns an empty track list without crashing."""
@@ -134,6 +139,50 @@ class TestByteTracker(unittest.TestCase):
         self.assertEqual(annotated.shape, dummy_frame.shape)
         self.assertGreater(np.sum(annotated), 0)
         print(" [PASS] Test 6: Track annotation drawing verified")
+
+    def test_07_dinesight_calibrated_config(self):
+        """Verify that the DineSight custom ByteTrack config file exists and contains valid parameters."""
+        cfg_path = "config/bytetrack_dinesight.yaml"
+        self.assertTrue(os.path.exists(cfg_path), f"Missing {cfg_path}")
+        with open(cfg_path) as fp:
+            content = fp.read()
+        self.assertIn("tracker_type: bytetrack", content)
+        self.assertIn("track_buffer: 60", content)
+        self.assertIn("match_thresh: 0.80", content)
+        print(" [PASS] Test 7: DineSight custom ByteTrack configuration verified")
+
+    def test_08_dynamic_confidence_and_config_setters(self):
+        """Verify dynamic setters for confidence threshold and tracker configuration."""
+        tracker = ByteTracker(model_path=self.MODEL_PATH)
+        tracker.set_confidence_threshold(0.22)
+        self.assertEqual(tracker.conf_threshold, 0.22)
+
+        tracker.set_tracker_type("bytetrack.yaml")
+        self.assertEqual(tracker.tracker_type, "bytetrack.yaml")
+
+        with self.assertRaises(ValueError):
+            tracker.set_confidence_threshold(-0.1)
+        with self.assertRaises(ValueError):
+            tracker.set_confidence_threshold(1.2)
+        print(" [PASS] Test 8: Dynamic setters and boundary validation verified")
+
+    def test_09_track_metadata_and_duration(self):
+        """Verify track metadata tracking and duration calculation."""
+        tracker = ByteTracker(model_path=self.MODEL_PATH)
+        self.assertEqual(tracker.get_track_duration(999), 0.0)
+
+        # Mock track activity
+        tracker.track_metadata[1] = {
+            "first_seen": 100.0,
+            "last_seen": 105.5,
+            "frame_count": 55,
+        }
+        self.assertAlmostEqual(tracker.get_track_duration(1), 5.5, places=2)
+
+        tracker.reset()
+        self.assertEqual(len(tracker.track_metadata), 0)
+        self.assertEqual(tracker.get_track_duration(1), 0.0)
+        print(" [PASS] Test 9: Track metadata and duration calculation verified")
 
 
 if __name__ == "__main__":

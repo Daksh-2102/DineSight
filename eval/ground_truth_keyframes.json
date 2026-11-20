@@ -1,0 +1,220 @@
+{
+  "version": "1.0",
+  "dataset": "data/sample_videos/restaurant_cctv_sample.mp4",
+  "resolution": [848, 480],
+  "fps": 25.0,
+  "total_video_frames": 1477,
+  "description": "Ground-truth manual validation benchmarks for DineSight AI on real CCTV surveillance footage",
+  "keyframes": [
+    {
+      "frame_index": 0,
+      "time_sec": 0.0,
+      "expected_persons": 5,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 2,
+        "table_3": 0,
+        "table_4": 0,
+        "table_5": 0
+      },
+      "expected_table_states": {
+        "table_1": "VACANT",
+        "table_2": "VACANT",
+        "table_3": "VACANT",
+        "table_4": "VACANT",
+        "table_5": "VACANT"
+      },
+      "expected_queue_count": 0,
+      "description": "Initial frame: Seated patrons present, dwell threshold not yet elapsed (all tables starting at VACANT baseline)."
+    },
+    {
+      "frame_index": 50,
+      "time_sec": 2.0,
+      "expected_persons": 5,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 2,
+        "table_3": 0,
+        "table_4": 0,
+        "table_5": 0
+      },
+      "expected_table_states": {
+        "table_1": "VACANT",
+        "table_2": "VACANT",
+        "table_3": "VACANT",
+        "table_4": "VACANT",
+        "table_5": "VACANT"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 50 (2.0s): Dwell time approaching confirmation threshold (2.0s - 2.5s)."
+    },
+    {
+      "frame_index": 100,
+      "time_sec": 4.0,
+      "expected_persons": 9,
+      "expected_table_occupants": {
+        "table_1": 4,
+        "table_2": 2,
+        "table_3": 0,
+        "table_4": 0,
+        "table_5": 0
+      },
+      "expected_table_states": {
+        "table_1": "OCCUPIED",
+        "table_2": "DINING",
+        "table_3": "VACANT",
+        "table_4": "VACANT",
+        "table_5": "VACANT"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 100 (4.0s): Table 1 confirmed OCCUPIED (4p); Table 2 confirmed DINING with detected bottle; 3 persons in aisles/service area."
+    },
+    {
+      "frame_index": 200,
+      "time_sec": 8.0,
+      "expected_persons": 7,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 2,
+        "table_3": 0,
+        "table_4": 0,
+        "table_5": 0
+      },
+      "expected_table_states": {
+        "table_1": "WAITING_FOR_FOOD",
+        "table_2": "DINING",
+        "table_3": "VACANT",
+        "table_4": "VACANT",
+        "table_5": "VACANT"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 200 (8.0s): Table 1 dwelled > 5.0s without food/tableware -> WAITING_FOR_FOOD; Table 2 remains DINING."
+    },
+    {
+      "frame_index": 300,
+      "time_sec": 12.0,
+      "expected_persons": 7,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 2,
+        "table_3": 0,
+        "table_4": 0,
+        "table_5": 0
+      },
+      "expected_table_states": {
+        "table_1": "WAITING_FOR_FOOD",
+        "table_2": "DINING",
+        "table_3": "VACANT",
+        "table_4": "VACANT",
+        "table_5": "VACANT"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 300 (12.0s): Steady state operation; Table 1 waiting, Table 2 dining, Tables 3, 4, 5 vacant."
+    },
+    {
+      "frame_index": 500,
+      "time_sec": 20.0,
+      "expected_persons": 10,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 3,
+        "table_3": 1,
+        "table_4": 0,
+        "table_5": 1
+      },
+      "expected_table_states": {
+        "table_1": "WAITING_FOR_FOOD",
+        "table_2": "DINING",
+        "table_3": "OCCUPIED",
+        "table_4": "VACANT",
+        "table_5": "OCCUPIED"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 500 (20.0s): Peak dining room activity. Tables 1, 2, 3, and 5 occupied; Table 4 vacant."
+    },
+    {
+      "frame_index": 750,
+      "time_sec": 30.0,
+      "expected_persons": 10,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 3,
+        "table_3": 1,
+        "table_4": 0,
+        "table_5": 1
+      },
+      "expected_table_states": {
+        "table_1": "WAITING_FOR_FOOD",
+        "table_2": "DINING",
+        "table_3": "OCCUPIED",
+        "table_4": "VACANT",
+        "table_5": "OCCUPIED"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 750 (30.0s): Continuous occupancy on 4 tables; counter staff and walking patrons in aisles."
+    },
+    {
+      "frame_index": 1000,
+      "time_sec": 40.0,
+      "expected_persons": 6,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 1,
+        "table_3": 0,
+        "table_4": 0,
+        "table_5": 1
+      },
+      "expected_table_states": {
+        "table_1": "WAITING_FOR_FOOD",
+        "table_2": "DINING",
+        "table_3": "VACANT",
+        "table_4": "VACANT",
+        "table_5": "OCCUPIED"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 1000 (40.0s): Table 3 patron departed (returned to VACANT); Table 1 waiting, Table 2 dining."
+    },
+    {
+      "frame_index": 1250,
+      "time_sec": 50.0,
+      "expected_persons": 8,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 2,
+        "table_3": 0,
+        "table_4": 0,
+        "table_5": 0
+      },
+      "expected_table_states": {
+        "table_1": "WAITING_FOR_FOOD",
+        "table_2": "DINING",
+        "table_3": "VACANT",
+        "table_4": "VACANT",
+        "table_5": "VACANT"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 1250 (50.0s): Patrons walking through aisle towards entrance/exit; Tables 1 & 2 active."
+    },
+    {
+      "frame_index": 1450,
+      "time_sec": 58.0,
+      "expected_persons": 5,
+      "expected_table_occupants": {
+        "table_1": 3,
+        "table_2": 1,
+        "table_3": 0,
+        "table_4": 0,
+        "table_5": 0
+      },
+      "expected_table_states": {
+        "table_1": "WAITING_FOR_FOOD",
+        "table_2": "DINING",
+        "table_3": "VACANT",
+        "table_4": "VACANT",
+        "table_5": "VACANT"
+      },
+      "expected_queue_count": 0,
+      "description": "Frame 1450 (58.0s): End of video sample; stable dining room state."
+    }
+  ]
+}

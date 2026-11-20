@@ -56,6 +56,17 @@ def main():
         action="store_true",
         help="Disable automatic looping when video ends",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without displaying a GUI window",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=0,
+        help="Maximum frames to process before exiting (0 = infinite)",
+    )
 
     args = parser.parse_args()
 
@@ -73,7 +84,11 @@ def main():
             frame_skip=args.skip,
             loop=not args.no_loop,
         )
-        reader.run_preview(window_name="DineSight AI - Video Ingestion (Phase 1)")
+        reader.run_preview(
+            window_name="DineSight AI - Video Ingestion (Phase 1)",
+            headless=args.headless,
+            max_frames=args.max_frames,
+        )
     except FileNotFoundError as fnf_err:
         print(f"\n[Error] {fnf_err}")
         print("Tip: You can regenerate the synthetic sample video with:")

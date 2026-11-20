@@ -45,6 +45,7 @@ class RegionOfInterest:
         polygon_normalized: List[List[float]],
         region_type: str = "table",
         max_capacity: int = 2,
+        tripwire_normalized: Optional[List[List[float]]] = None,
     ):
         """
         Args:
@@ -53,11 +54,13 @@ class RegionOfInterest:
             polygon_normalized: List of [x, y] coordinates in [0.0, 1.0].
             region_type: 'table', 'queue', or 'entrance'.
             max_capacity: Seating capacity (for tables).
+            tripwire_normalized: Optional [[x1, y1], [x2, y2]] boundary line coordinates.
         """
         self.region_id = str(region_id)
         self.name = str(name)
         self.region_type = region_type.lower()
         self.max_capacity = int(max_capacity)
+        self.tripwire_normalized = tripwire_normalized
 
         # Validate coordinates
         self.polygon_normalized = self._validate_and_sanitize(polygon_normalized)
@@ -115,6 +118,32 @@ class RegionOfInterest:
         result = cv2.pointPolygonTest(poly, (float(point[0]), float(point[1])), measureDist=False)
         return result >= 0
 
+    def compute_bbox_overlap_ratio(
+        self,
+        bbox: List[int],
+        frame_width: int,
+        frame_height: int,
+    ) -> float:
+        """
+        Compute the intersection area ratio of a bounding box [x1, y1, x2, y2]
+        relative to the bounding box's total area.
+        Returns float in [0.0, 1.0].
+        """
+        x1, y1, x2, y2 = bbox
+        bw = max(1, x2 - x1)
+        bh = max(1, y2 - y1)
+        bbox_area = float(bw * bh)
+
+        poly = self.get_pixel_polygon(frame_width, frame_height)
+        # Shift polygon into local bounding box coordinates
+        shifted_poly = poly.reshape((-1, 2)) - [x1, y1]
+
+        mask = np.zeros((bh, bw), dtype=np.uint8)
+        cv2.fillPoly(mask, [shifted_poly], 255)
+        overlap_area = float(cv2.countNonZero(mask))
+
+        return overlap_area / bbox_area
+
     def get_centroid(self, frame_width: int, frame_height: int) -> Tuple[int, int]:
         """Compute the geometric centroid of the polygon in pixel coordinates."""
         poly = self.get_pixel_polygon(frame_width, frame_height)
@@ -139,6 +168,8 @@ class ROIManager:
         self,
         config_path: str = "config/rois.json",
         point_mode: str = "bottom_center",
+        association_mode: str = "hybrid",
+        overlap_threshold: float = 0.25,
     ):
         """
         Args:
@@ -146,15 +177,25 @@ class ROIManager:
             point_mode: How to extract representative point from a person bounding box.
                         'bottom_center': ((x1+x2)//2, y2) -> Best for floor/table projection.
                         'center': ((x1+x2)//2, (y1+y2)//2) -> Center of mass.
+            association_mode: Spatial association strategy:
+                              'hybrid': Combines bounding-box overlap ratio (>=25%) with
+                                        centroid and bottom-center fallbacks. (Recommended)
+                              'bbox_overlap': Pure area overlap thresholding.
+                              'point': Legacy single-point containment.
+            overlap_threshold: Minimum bounding-box intersection ratio (default 0.25 or 25%).
         """
         self.config_path = config_path
         self.point_mode = point_mode.lower()
         if self.point_mode not in ("bottom_center", "center"):
             self.point_mode = "bottom_center"
 
+        self.association_mode = association_mode.lower()
+        self.overlap_threshold = float(overlap_threshold)
+
         self.tables: Dict[str, RegionOfInterest] = {}
         self.queue_region: Optional[RegionOfInterest] = None
         self.entrance_region: Optional[RegionOfInterest] = None
+        self.counter_region: Optional[RegionOfInterest] = None
 
         self.load_config(self.config_path)
 
@@ -172,6 +213,7 @@ class ROIManager:
         self.tables.clear()
         self.queue_region = None
         self.entrance_region = None
+        self.counter_region = None
 
         # 1. Parse Tables
         tables_data = data.get("tables", [])
@@ -206,6 +248,17 @@ class ROIManager:
                 name=e_data.get("name", "Entrance Zone"),
                 polygon_normalized=e_data["polygon"],
                 region_type="entrance",
+                tripwire_normalized=e_data.get("tripwire"),
+            )
+
+        # 4. Parse Service Counter
+        if "counter" in data and data["counter"]:
+            c_data = data["counter"]
+            self.counter_region = RegionOfInterest(
+                region_id=c_data.get("id", "counter_zone"),
+                name=c_data.get("name", "Service Counter"),
+                polygon_normalized=c_data["polygon"],
+                region_type="counter",
             )
 
     def get_representative_point(self, bbox: List[int]) -> Tuple[int, int]:
@@ -254,6 +307,48 @@ class ROIManager:
                 best_table = t_id
         return best_table
 
+    def find_table_for_bbox(
+        self,
+        bbox: List[int],
+        frame_width: int,
+        frame_height: int,
+    ) -> Optional[str]:
+        """
+        Find which table best associates with a bounding box [x1, y1, x2, y2].
+        Uses intersection overlap area ratio and multi-anchor verification.
+        """
+        best_table = None
+        best_overlap = 0.0
+
+        # Primary metric: maximum area overlap ratio
+        for t_id, table in self.tables.items():
+            ov = table.compute_bbox_overlap_ratio(bbox, frame_width, frame_height)
+            if ov >= self.overlap_threshold and ov > best_overlap:
+                best_overlap = ov
+                best_table = t_id
+
+        # Fallback to multi-anchor point containment if overlap below threshold
+        if best_table is None and self.association_mode == "hybrid":
+            x1, y1, x2, y2 = bbox
+            cx = int((x1 + x2) / 2)
+            cy = int((y1 + y2) / 2)
+            centroid = (cx, cy)
+            bottom_center = (cx, int(y2))
+            lower_torso = (cx, int(y1 + 0.75 * (y2 - y1)))
+
+            for pt in (lower_torso, centroid, bottom_center):
+                matched = self.find_table_for_point(pt, frame_width, frame_height)
+                if matched is not None:
+                    return matched
+
+        return best_table
+
+    def is_in_counter(self, point: Tuple[int, int], frame_width: int, frame_height: int) -> bool:
+        """Check if a point is inside the service counter zone."""
+        if self.counter_region is None:
+            return False
+        return self.counter_region.contains_point(point, frame_width, frame_height)
+
     def is_in_queue(self, point: Tuple[int, int], frame_width: int, frame_height: int) -> bool:
         """Check if a point is inside the queue zone."""
         if self.queue_region is None:
@@ -266,6 +361,36 @@ class ROIManager:
             return False
         return self.entrance_region.contains_point(point, frame_width, frame_height)
 
+    def get_entrance_tripwire(
+        self,
+        frame_width: int,
+        frame_height: int,
+    ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """
+        Return the entrance boundary tripwire line in absolute pixel coordinates.
+        Uses configured tripwire if available, otherwise computes the bottom edge
+        of the entrance polygon.
+        """
+        if self.entrance_region is None:
+            return None
+
+        if self.entrance_region.tripwire_normalized is not None:
+            p1_norm, p2_norm = self.entrance_region.tripwire_normalized
+            p1 = (int(round(p1_norm[0] * frame_width)), int(round(p1_norm[1] * frame_height)))
+            p2 = (int(round(p2_norm[0] * frame_width)), int(round(p2_norm[1] * frame_height)))
+            return p1, p2
+
+        # Automatically derive bottom horizontal edge of entrance polygon
+        poly = self.entrance_region.polygon_normalized
+        sorted_by_y = sorted(poly, key=lambda pt: pt[1], reverse=True)
+        if len(sorted_by_y) >= 2:
+            pt_a, pt_b = sorted_by_y[0], sorted_by_y[1]
+            p1 = (int(round(min(pt_a[0], pt_b[0]) * frame_width)), int(round(pt_a[1] * frame_height)))
+            p2 = (int(round(max(pt_a[0], pt_b[0]) * frame_width)), int(round(pt_b[1] * frame_height)))
+            return p1, p2
+
+        return None
+
     def associate_tracks(
         self,
         tracks: List[Dict],
@@ -274,51 +399,95 @@ class ROIManager:
     ) -> Dict:
         """
         Perform spatial mapping: takes all current tracked people and associates
-        them with tables, queue, or unassigned floor area.
-
-        Returns:
-            {
-                "tables": {
-                    "table_1": [track_obj1, ...],
-                    "table_2": [],
-                    ...
-                },
-                "queue": [track_obj3, ...],
-                "entrance": [],
-                "unassigned": [track_obj4, ...]
-            }
+        them with tables, queue, counter, or unassigned floor area.
         """
         mapping: Dict[str, Union[Dict[str, List[Dict]], List[Dict]]] = {
             "tables": {t_id: [] for t_id in self.tables},
             "queue": [],
+            "counter": [],
             "entrance": [],
             "unassigned": [],
         }
 
         for trk in tracks:
-            pt = self.get_representative_point(trk["bbox"])
+            # Skip non-person tracks (tableware items) so they don't count as human patrons
+            if trk.get("class_id", 0) != 0 and trk.get("class_name", "person") != "person":
+                continue
+
+            bbox = trk["bbox"]
+            pt = self.get_representative_point(bbox)
             trk_with_pt = {**trk, "representative_point": pt}
 
-            # 1. Check Table ROIs
-            matched_table = self.find_table_for_point(pt, frame_width, frame_height)
+            # 1. Check Table ROIs using configured association mode
+            if self.association_mode in ("hybrid", "bbox_overlap"):
+                matched_table = self.find_table_for_bbox(bbox, frame_width, frame_height)
+            else:
+                matched_table = self.find_table_for_point(pt, frame_width, frame_height)
+
             if matched_table is not None:
                 mapping["tables"][matched_table].append(trk_with_pt)
                 continue
 
-            # 2. Check Queue ROI
-            if self.is_in_queue(pt, frame_width, frame_height):
+            # 2. Check Counter ROI (point or overlap)
+            in_counter = self.is_in_counter(pt, frame_width, frame_height)
+            if not in_counter and self.counter_region and self.association_mode in ("hybrid", "bbox_overlap"):
+                in_counter = self.counter_region.compute_bbox_overlap_ratio(bbox, frame_width, frame_height) >= self.overlap_threshold
+
+            if in_counter:
+                mapping["counter"].append(trk_with_pt)
+                # Counter occupants also count toward queue analysis
                 mapping["queue"].append(trk_with_pt)
                 continue
 
-            # 3. Check Entrance ROI
-            if self.is_in_entrance(pt, frame_width, frame_height):
+            # 3. Check Queue ROI (point or overlap)
+            in_queue = self.is_in_queue(pt, frame_width, frame_height)
+            if not in_queue and self.queue_region and self.association_mode in ("hybrid", "bbox_overlap"):
+                in_queue = self.queue_region.compute_bbox_overlap_ratio(bbox, frame_width, frame_height) >= self.overlap_threshold
+
+            if in_queue:
+                mapping["queue"].append(trk_with_pt)
+                continue
+
+            # 4. Check Entrance ROI (point or overlap)
+            in_entrance = self.is_in_entrance(pt, frame_width, frame_height)
+            if not in_entrance and self.entrance_region and self.association_mode in ("hybrid", "bbox_overlap"):
+                in_entrance = self.entrance_region.compute_bbox_overlap_ratio(bbox, frame_width, frame_height) >= self.overlap_threshold
+
+            if in_entrance:
                 mapping["entrance"].append(trk_with_pt)
                 continue
 
-            # 4. Otherwise Unassigned / Walking in Aisles
+            # 5. Otherwise Unassigned / Walking in Aisles
             mapping["unassigned"].append(trk_with_pt)
 
         return mapping
+
+    def associate_tableware(
+        self,
+        tableware_items: List[Dict],
+        frame_width: int,
+        frame_height: int,
+    ) -> Dict[str, List[Dict]]:
+        """
+        Associate detected tableware items (bottles, cups, bowls, cutlery) with table ROIs.
+        Returns a dictionary mapping table_id -> list of tableware items located on that table.
+        """
+        table_tableware: Dict[str, List[Dict]] = {t_id: [] for t_id in self.tables}
+        for item in tableware_items:
+            bbox = item["bbox"]
+            cx = int((bbox[0] + bbox[2]) / 2)
+            cy = int((bbox[1] + bbox[3]) / 2)
+            pt = (cx, cy)
+
+            matched_table = self.find_table_for_point(pt, frame_width, frame_height)
+            if matched_table is None and self.association_mode in ("hybrid", "bbox_overlap"):
+                matched_table = self.find_table_for_bbox(bbox, frame_width, frame_height)
+
+            if matched_table is not None:
+                item_with_pt = {**item, "representative_point": pt}
+                table_tableware[matched_table].append(item_with_pt)
+
+        return table_tableware
 
     def draw_rois(
         self,
@@ -326,49 +495,65 @@ class ROIManager:
         table_states: Optional[Dict[str, str]] = None,
         table_occupant_counts: Optional[Dict[str, int]] = None,
         queue_count: int = 0,
-        alpha: float = 0.22,
+        counter_count: int = 0,
+        entrance_metrics: Optional[Dict] = None,
+        table_tableware: Optional[Dict[str, List[Dict]]] = None,
+        alpha: float = 0.12,
     ) -> np.ndarray:
         """
-        Render semi-transparent colored polygons, perimeter outlines, and labels
-        for all active restaurant ROIs.
+        Render elegant, non-intrusive colored polygons, crisp perimeter outlines,
+        and top-anchored status badges for all active restaurant ROIs.
         """
         h, w = frame.shape[:2]
         overlay = frame.copy()
 
-        # 1. Draw Dining Tables
+        # 1. Dining Tables
         for t_id, table in self.tables.items():
             poly = table.get_pixel_polygon(w, h)
             state = (table_states or {}).get(t_id, "VACANT").upper()
             color = STATE_COLORS.get(state, STATE_COLORS["VACANT"])
 
-            # Semi-transparent polygon fill
+            # Delicate semi-transparent polygon fill
             cv2.fillPoly(overlay, [poly], color)
 
             # Solid perimeter border
             cv2.polylines(frame, [poly], isClosed=True, color=color, thickness=2, lineType=cv2.LINE_AA)
 
-            # Label Header Badge
-            cx, cy = table.get_centroid(w, h)
+            # Anchor badge to the top perimeter border of the table
+            pts = poly.reshape((-1, 2))
+            x_min, y_min = np.min(pts, axis=0)
+            x_max, _ = np.max(pts, axis=0)
+            top_cx = int((x_min + x_max) / 2)
+
+            # Compact, readable label (e.g. 'Table 1: DINING (2p) [Food]')
+            clean_name = table.name.split("(")[0].strip()
             occupants = (table_occupant_counts or {}).get(t_id, 0)
-            label = f"{table.name}: {state}"
+            tw_items = (table_tableware or {}).get(t_id, [])
+            tw_count = len(tw_items)
+
+            state_display = "WAITING" if "WAITING" in state else state
+            label = f"{clean_name}: {state_display}"
             if occupants > 0:
                 label += f" ({occupants}p)"
+            if tw_count > 0:
+                label += " [Food]"
 
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.45
+            font_scale = 0.38
             thickness = 1
-            (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness)
-            badge_x1 = max(5, cx - tw // 2 - 6)
-            badge_y1 = max(5, cy - th // 2 - 4)
-            badge_x2 = badge_x1 + tw + 12
-            badge_y2 = badge_y1 + th + 8
+            (tw_sz, th_sz), _ = cv2.getTextSize(label, font, font_scale, thickness)
+
+            badge_x1 = max(5, top_cx - tw_sz // 2 - 5)
+            badge_y1 = max(72, y_min - th_sz - 6)
+            badge_x2 = badge_x1 + tw_sz + 10
+            badge_y2 = badge_y1 + th_sz + 6
 
             cv2.rectangle(frame, (badge_x1, badge_y1), (badge_x2, badge_y2), (18, 22, 28), -1)
             cv2.rectangle(frame, (badge_x1, badge_y1), (badge_x2, badge_y2), color, 1)
             cv2.putText(
                 frame,
                 label,
-                (badge_x1 + 6, badge_y2 - 5),
+                (badge_x1 + 5, badge_y2 - 4),
                 font,
                 font_scale,
                 color,
@@ -376,49 +561,105 @@ class ROIManager:
                 cv2.LINE_AA,
             )
 
-        # 2. Draw Queue Zone
+            # Draw subtle tableware indicators on table surface
+            for tw_item in tw_items:
+                bx1, by1, bx2, by2 = tw_item["bbox"]
+                cv2.rectangle(frame, (bx1, by1), (bx2, by2), (255, 140, 0), 1)
+                tw_name = tw_item.get("class_name", "item")
+                cv2.putText(
+                    frame,
+                    tw_name.capitalize(),
+                    (bx1, max(10, by1 - 3)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.32,
+                    (255, 180, 50),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+        # 2. Service Counter Zone
+        if self.counter_region is not None:
+            c_poly = self.counter_region.get_pixel_polygon(w, h)
+            c_color = (210, 180, 50)  # Slate Cyan
+            cv2.fillPoly(overlay, [c_poly], c_color)
+            cv2.polylines(frame, [c_poly], isClosed=True, color=c_color, thickness=1, lineType=cv2.LINE_AA)
+
+            c_pts = c_poly.reshape((-1, 2))
+            cx_min, cy_min = np.min(c_pts, axis=0)
+            cx_max = np.max(c_pts[:, 0])
+            c_label = f"COUNTER ({counter_count} Active)" if counter_count > 0 else "SERVICE COUNTER"
+
+            (ctw, cth), _ = cv2.getTextSize(c_label, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
+            cbx = int((cx_min + cx_max) / 2) - ctw // 2 - 5
+            cby = max(72, cy_min - cth - 6)
+            cv2.rectangle(frame, (cbx, cby), (cbx + ctw + 10, cby + cth + 6), (18, 22, 28), -1)
+            cv2.rectangle(frame, (cbx, cby), (cbx + ctw + 10, cby + cth + 6), c_color, 1)
+            cv2.putText(
+                frame,
+                c_label,
+                (cbx + 5, cby + cth + 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.36,
+                c_color,
+                1,
+                cv2.LINE_AA,
+            )
+
+        # 3. Queue Zone
         if self.queue_region is not None:
             q_poly = self.queue_region.get_pixel_polygon(w, h)
             q_color = STATE_COLORS["QUEUE"]
             cv2.fillPoly(overlay, [q_poly], q_color)
-            cv2.polylines(frame, [q_poly], isClosed=True, color=q_color, thickness=2, lineType=cv2.LINE_AA)
+            cv2.polylines(frame, [q_poly], isClosed=True, color=q_color, thickness=1, lineType=cv2.LINE_AA)
 
-            q_cx, q_cy = self.queue_region.get_centroid(w, h)
+            q_pts = q_poly.reshape((-1, 2))
+            qx_min, qy_min = np.min(q_pts, axis=0)
+            qx_max = np.max(q_pts[:, 0])
             q_label = f"QUEUE ({queue_count} Waiting)"
-            (q_tw, q_th), _ = cv2.getTextSize(q_label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-            q_bx1 = max(5, q_cx - q_tw // 2 - 6)
-            q_by1 = max(5, q_cy - q_th // 2 - 4)
-            cv2.rectangle(frame, (q_bx1, q_by1), (q_bx1 + q_tw + 12, q_by1 + q_th + 8), (18, 22, 28), -1)
-            cv2.rectangle(frame, (q_bx1, q_by1), (q_bx1 + q_tw + 12, q_by1 + q_th + 8), q_color, 1)
+
+            (q_tw, q_th), _ = cv2.getTextSize(q_label, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
+            q_bx1 = int((qx_min + qx_max) / 2) - q_tw // 2 - 5
+            q_by1 = max(72, qy_min - q_th - 6)
+            cv2.rectangle(frame, (q_bx1, q_by1), (q_bx1 + q_tw + 10, q_by1 + q_th + 6), (18, 22, 28), -1)
+            cv2.rectangle(frame, (q_bx1, q_by1), (q_bx1 + q_tw + 10, q_by1 + q_th + 6), q_color, 1)
             cv2.putText(
                 frame,
                 q_label,
-                (q_bx1 + 6, q_by1 + q_th + 2),
+                (q_bx1 + 5, q_by1 + q_th + 2),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
+                0.36,
                 q_color,
                 1,
                 cv2.LINE_AA,
             )
 
-        # 3. Draw Entrance Zone
+        # 4. Entrance Zone (Subtle outline, no duplicate footfall numbers)
         if self.entrance_region is not None:
             e_poly = self.entrance_region.get_pixel_polygon(w, h)
             e_color = STATE_COLORS["ENTRANCE"]
             cv2.polylines(frame, [e_poly], isClosed=True, color=e_color, thickness=1, lineType=cv2.LINE_AA)
-            e_cx, e_cy = self.entrance_region.get_centroid(w, h)
+
+            e_pts = e_poly.reshape((-1, 2))
+            ex_min, ey_min = np.min(e_pts, axis=0)
+            ex_max = np.max(e_pts[:, 0])
+            e_label = "ENTRANCE ZONE"
+            (e_tw, e_th), _ = cv2.getTextSize(e_label, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)
+            ebx1 = int((ex_min + ex_max) / 2) - e_tw // 2 - 5
+            eby1 = max(72, ey_min - e_th - 6)
+            cv2.rectangle(frame, (ebx1, eby1), (ebx1 + e_tw + 10, eby1 + e_th + 6), (18, 22, 28), -1)
+            cv2.rectangle(frame, (ebx1, eby1), (ebx1 + e_tw + 10, eby1 + e_th + 6), e_color, 1)
             cv2.putText(
                 frame,
-                "ENTRANCE",
-                (e_cx - 35, e_cy + 4),
+                e_label,
+                (ebx1 + 5, eby1 + e_th + 2),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.40,
+                0.36,
                 e_color,
                 1,
                 cv2.LINE_AA,
             )
 
-        # Alpha blend overlay with frame
+        # Alpha blend subtle overlay with frame
         cv2.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0, frame)
         return frame
 

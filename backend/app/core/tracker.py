@@ -22,6 +22,8 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
+from backend.app.core.detector import COCO_TABLEWARE_CLASSES, COCO_TABLEWARE_NAMES
+
 
 # Distinct visual palette for track ID bounding boxes
 TRACK_COLORS = [
@@ -51,31 +53,52 @@ class ByteTracker:
     and track target objects across consecutive video frames.
     """
 
+    DEFAULT_TRACKER_CONFIG = "config/bytetrack_dinesight.yaml"
+
     def __init__(
         self,
         model_path: str = "data/models/yolov8n.pt",
-        conf_threshold: float = 0.35,
+        conf_threshold: float = 0.20,
         target_classes: Optional[List[int]] = None,
-        tracker_type: str = "bytetrack.yaml",
+        tracker_type: Optional[str] = None,
         device: Optional[str] = None,
         imgsz: int = 640,
+        include_tableware: bool = False,
     ):
         """
         Initialize the ByteTracker.
 
         Args:
             model_path: Path to YOLO weights file (.pt).
-            conf_threshold: Minimum detection confidence score.
+            conf_threshold: Minimum detection confidence score. Calibrated to 0.20
+                            to allow ByteTrack two-stage association to match
+                            partially occluded seated patrons.
             target_classes: List of class IDs to track. Default [0] ('person').
-            tracker_type: Tracker configuration file ('bytetrack.yaml').
+            tracker_type: Tracker configuration file path or name. If None,
+                          automatically resolves config/bytetrack_dinesight.yaml
+                          if present, falling back to built-in 'bytetrack.yaml'.
             device: 'cuda', 'cpu', or None (auto-detect).
             imgsz: Input resolution for inference.
+            include_tableware: If True and target_classes is None, tracks both persons
+                               and COCO tableware items (bottles, cups, bowls, cutlery).
         """
         self.model_path = model_path
         self.conf_threshold = float(conf_threshold)
-        self.target_classes = target_classes if target_classes is not None else [0]
-        self.tracker_type = tracker_type
+        if target_classes is not None:
+            self.target_classes = target_classes
+        elif include_tableware:
+            self.target_classes = [0] + COCO_TABLEWARE_CLASSES
+        else:
+            self.target_classes = [0]
         self.imgsz = imgsz
+
+        # Resolve tracker configuration
+        if tracker_type is not None:
+            self.tracker_type = tracker_type
+        elif os.path.exists(self.DEFAULT_TRACKER_CONFIG):
+            self.tracker_type = self.DEFAULT_TRACKER_CONFIG
+        else:
+            self.tracker_type = "bytetrack.yaml"
 
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(
@@ -112,6 +135,45 @@ class ByteTracker:
         # Memory of unique track IDs seen in this session (transient only)
         self.active_track_ids: set = set()
         self.total_unique_tracks_seen: int = 0
+        # In-memory track telemetry (transient, non-biometric, privacy-preserving)
+        self.track_metadata: Dict[int, Dict] = {}
+
+    def set_confidence_threshold(self, conf: float) -> None:
+        """Dynamically update tracker detection confidence threshold [0.0 - 1.0]."""
+        if not 0.0 <= conf <= 1.0:
+            raise ValueError(f"Confidence threshold must be between 0.0 and 1.0, got {conf}")
+        self.conf_threshold = float(conf)
+
+    def set_tracker_type(self, tracker_type: str) -> None:
+        """Update tracker configuration file."""
+        self.tracker_type = tracker_type
+
+    def get_track_duration(self, track_id: int) -> float:
+        """Return duration in seconds this track has been continuously observed."""
+        meta = self.track_metadata.get(track_id)
+        if not meta:
+            return 0.0
+        return meta["last_seen"] - meta["first_seen"]
+
+    @staticmethod
+    def separate_tracks(tracks: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+        """
+        Split a combined track list into human person tracks and tableware items.
+
+        Returns:
+            Tuple of (person_tracks, tableware_tracks)
+        """
+        person_tracks = []
+        tableware_tracks = []
+        for trk in tracks:
+            cls_id = trk.get("class_id", 0)
+            if cls_id == 0:
+                person_tracks.append(trk)
+            elif cls_id in COCO_TABLEWARE_CLASSES:
+                tableware_tracks.append(trk)
+            else:
+                person_tracks.append(trk)
+        return person_tracks, tableware_tracks
 
     def update(self, frame: np.ndarray) -> List[Dict]:
         """
@@ -185,9 +247,18 @@ class ByteTracker:
                 continue
 
             current_frame_ids.add(track_id)
+            now_t = time.time()
             if track_id not in self.active_track_ids:
                 self.active_track_ids.add(track_id)
                 self.total_unique_tracks_seen += 1
+                self.track_metadata[track_id] = {
+                    "first_seen": now_t,
+                    "last_seen": now_t,
+                    "frame_count": 1,
+                }
+            else:
+                self.track_metadata[track_id]["last_seen"] = now_t
+                self.track_metadata[track_id]["frame_count"] += 1
 
             cx = int((x1 + x2) / 2)
             cy = int((y1 + y2) / 2)
@@ -209,6 +280,7 @@ class ByteTracker:
         """
         self.active_track_ids.clear()
         self.total_unique_tracks_seen = 0
+        self.track_metadata.clear()
         # Re-initializing the YOLO model predictor clears internal tracker buffers
         try:
             self.model = YOLO(self.model_path)
@@ -234,33 +306,49 @@ class ByteTracker:
             cls_name = trk["class_name"]
             cx, cy = trk["center"]
 
-            color = get_color_for_id(track_id)
+            cls_id = trk.get("class_id", 0)
+            is_tableware = cls_id in COCO_TABLEWARE_CLASSES
+            color = (255, 140, 0) if is_tableware else get_color_for_id(track_id)
+            active_thickness = 1 if is_tableware else box_thickness
 
             # Draw bounding box
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, box_thickness)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, active_thickness)
 
             # Draw center centroid dot
-            if show_center:
+            if show_center and not is_tableware:
                 cv2.circle(annotated, (cx, cy), 4, color, -1)
                 cv2.circle(annotated, (cx, cy), 6, (255, 255, 255), 1)
 
-            # Construct label: "Person #1 | 0.85"
+            # Construct label: "Person #1 (85%)" or "Bottle #4 (37%)"
             label = f"{cls_name.capitalize()} #{track_id} ({int(conf * 100)}%)"
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.45
+            font_scale = 0.38 if is_tableware else 0.45
             thickness = 1
 
             (text_w, text_h), baseline = cv2.getTextSize(label, font, font_scale, thickness)
-            badge_y1 = max(0, y1 - text_h - 8)
-            badge_y2 = y1
 
-            # Badge background
+            # If person is near the top edge or HUD, flip badge inside the bounding box
+            if y1 < 78:
+                badge_y1 = y1 + 2
+                badge_y2 = badge_y1 + text_h + 6
+            else:
+                badge_y1 = max(0, y1 - text_h - 6)
+                badge_y2 = y1
+
+            # High-contrast dark badge with colored border
+            cv2.rectangle(
+                annotated,
+                (x1, badge_y1),
+                (x1 + text_w + 8, badge_y2),
+                (18, 22, 28),
+                -1,
+            )
             cv2.rectangle(
                 annotated,
                 (x1, badge_y1),
                 (x1 + text_w + 8, badge_y2),
                 color,
-                -1,
+                1,
             )
             # Text inside badge
             cv2.putText(
@@ -269,7 +357,7 @@ class ByteTracker:
                 (x1 + 4, badge_y2 - 4),
                 font,
                 font_scale,
-                (15, 15, 15),
+                (240, 240, 240) if not is_tableware else (255, 180, 50),
                 thickness,
                 cv2.LINE_AA,
             )

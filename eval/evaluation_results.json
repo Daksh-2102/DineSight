@@ -1,0 +1,435 @@
+{
+  "timestamp": "2026-11-19T19:56:13Z",
+  "benchmark_config": {
+    "video": "data/sample_videos/restaurant_cctv_sample.mp4",
+    "model": "data/models/yolov8n.pt",
+    "confidence_threshold": 0.2,
+    "iou_threshold": 0.5,
+    "image_size": 640,
+    "device": "CPU"
+  },
+  "keyframe_accuracy": {
+    "evaluated_keyframes": 10,
+    "person_counting": {
+      "mean_absolute_error": 0.3,
+      "root_mean_squared_error": 0.55,
+      "counting_accuracy_pct": 96.8
+    },
+    "table_occupancy_classification": {
+      "overall_accuracy_pct": 90.0,
+      "correct_evaluations": 45,
+      "total_evaluations": 50,
+      "per_table_accuracy_pct": {
+        "table_1": 90.0,
+        "table_2": 90.0,
+        "table_3": 80.0,
+        "table_4": 100.0,
+        "table_5": 90.0
+      }
+    },
+    "keyframe_details": [
+      {
+        "frame_index": 0,
+        "time_sec": 0.0,
+        "persons_actual": 5,
+        "persons_predicted": 5,
+        "person_error": 0,
+        "tables": {
+          "table_1": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_2": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          }
+        }
+      },
+      {
+        "frame_index": 50,
+        "time_sec": 2.0,
+        "persons_actual": 5,
+        "persons_predicted": 5,
+        "person_error": 0,
+        "tables": {
+          "table_1": {
+            "pred": "OCCUPIED",
+            "expected": "VACANT",
+            "match": false
+          },
+          "table_2": {
+            "pred": "OCCUPIED",
+            "expected": "VACANT",
+            "match": false
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          }
+        }
+      },
+      {
+        "frame_index": 100,
+        "time_sec": 4.0,
+        "persons_actual": 9,
+        "persons_predicted": 9,
+        "person_error": 0,
+        "tables": {
+          "table_1": {
+            "pred": "OCCUPIED",
+            "expected": "OCCUPIED",
+            "match": true
+          },
+          "table_2": {
+            "pred": "OCCUPIED",
+            "expected": "DINING",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          }
+        }
+      },
+      {
+        "frame_index": 200,
+        "time_sec": 8.0,
+        "persons_actual": 7,
+        "persons_predicted": 7,
+        "person_error": 0,
+        "tables": {
+          "table_1": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "WAITING_FOR_FOOD",
+            "match": true
+          },
+          "table_2": {
+            "pred": "DINING",
+            "expected": "DINING",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          }
+        }
+      },
+      {
+        "frame_index": 300,
+        "time_sec": 12.0,
+        "persons_actual": 7,
+        "persons_predicted": 7,
+        "person_error": 0,
+        "tables": {
+          "table_1": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "WAITING_FOR_FOOD",
+            "match": true
+          },
+          "table_2": {
+            "pred": "DINING",
+            "expected": "DINING",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          }
+        }
+      },
+      {
+        "frame_index": 500,
+        "time_sec": 20.0,
+        "persons_actual": 10,
+        "persons_predicted": 11,
+        "person_error": 1,
+        "tables": {
+          "table_1": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "WAITING_FOR_FOOD",
+            "match": true
+          },
+          "table_2": {
+            "pred": "DINING",
+            "expected": "DINING",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "OCCUPIED",
+            "match": false
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "VACANT",
+            "expected": "OCCUPIED",
+            "match": false
+          }
+        }
+      },
+      {
+        "frame_index": 750,
+        "time_sec": 30.0,
+        "persons_actual": 10,
+        "persons_predicted": 11,
+        "person_error": 1,
+        "tables": {
+          "table_1": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "WAITING_FOR_FOOD",
+            "match": true
+          },
+          "table_2": {
+            "pred": "DINING",
+            "expected": "DINING",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "OCCUPIED",
+            "match": false
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "OCCUPIED",
+            "match": true
+          }
+        }
+      },
+      {
+        "frame_index": 1000,
+        "time_sec": 40.0,
+        "persons_actual": 6,
+        "persons_predicted": 6,
+        "person_error": 0,
+        "tables": {
+          "table_1": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "WAITING_FOR_FOOD",
+            "match": true
+          },
+          "table_2": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "DINING",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "OCCUPIED",
+            "match": true
+          }
+        }
+      },
+      {
+        "frame_index": 1250,
+        "time_sec": 50.0,
+        "persons_actual": 8,
+        "persons_predicted": 9,
+        "person_error": 1,
+        "tables": {
+          "table_1": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "WAITING_FOR_FOOD",
+            "match": true
+          },
+          "table_2": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "DINING",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          }
+        }
+      },
+      {
+        "frame_index": 1450,
+        "time_sec": 58.0,
+        "persons_actual": 5,
+        "persons_predicted": 5,
+        "person_error": 0,
+        "tables": {
+          "table_1": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "WAITING_FOR_FOOD",
+            "match": true
+          },
+          "table_2": {
+            "pred": "WAITING_FOR_FOOD",
+            "expected": "DINING",
+            "match": true
+          },
+          "table_3": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_4": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          },
+          "table_5": {
+            "pred": "VACANT",
+            "expected": "VACANT",
+            "match": true
+          }
+        }
+      }
+    ]
+  },
+  "continuous_stream_profiling": {
+    "processed_frames": 739,
+    "total_video_frames": 1477,
+    "sample_step": 2,
+    "hardware_device": "CPU",
+    "timing_and_throughput": {
+      "overall_pipeline_fps": 21.4,
+      "mean_inference_time_ms": 41.0,
+      "median_inference_time_ms": 39.0,
+      "p95_inference_time_ms": 51.3,
+      "min_inference_time_ms": 34.3,
+      "max_inference_time_ms": 229.5
+    },
+    "multi_object_tracking": {
+      "total_unique_tracks": 69,
+      "avg_persons_per_frame": 6.27,
+      "max_persons_in_single_frame": 11,
+      "avg_tableware_per_frame": 0.25,
+      "avg_track_duration_sec": 3.76,
+      "max_track_duration_sec": 34.32
+    },
+    "operations_and_flow": {
+      "final_queue_length": 0,
+      "total_completed_queue_sessions": 1,
+      "avg_queue_wait_sec": 16.5,
+      "total_entries": 0,
+      "total_exits": 0,
+      "net_in_building": 0
+    },
+    "final_table_occupancies": {
+      "table_1": {
+        "state": "WAITING_FOR_FOOD",
+        "occupants": 2,
+        "tableware": false,
+        "occupied_duration_sec": 57.0
+      },
+      "table_2": {
+        "state": "WAITING_FOR_FOOD",
+        "occupants": 2,
+        "tableware": false,
+        "occupied_duration_sec": 57.0
+      },
+      "table_3": {
+        "state": "VACANT",
+        "occupants": 0,
+        "tableware": false,
+        "occupied_duration_sec": 0.0
+      },
+      "table_4": {
+        "state": "VACANT",
+        "occupants": 0,
+        "tableware": false,
+        "occupied_duration_sec": 0.0
+      },
+      "table_5": {
+        "state": "VACANT",
+        "occupants": 0,
+        "tableware": false,
+        "occupied_duration_sec": 0.0
+      }
+    }
+  }
+}

@@ -106,13 +106,18 @@ class TestTableStateEngine(unittest.TestCase):
 
     def test_06_activity_state_dining_vs_waiting(self):
         """Test transition between WAITING_FOR_FOOD and DINING based on tableware evidence."""
-        session = TableSession("table_1", dwell_time_sec=1.0, activity_smoothing_sec=1.0)
+        session = TableSession(
+            "table_1",
+            dwell_time_sec=1.0,
+            waiting_threshold_sec=0.5,
+            activity_smoothing_sec=1.0,
+        )
         occupant = [{"track_id": 7}]
         tableware = [{"class_name": "cup"}]
 
-        # Occupy table without tableware
+        # Occupy table without tableware for > dwell + waiting_threshold (1.6s >= 1.5s)
         session.update(occupant, tableware_detections=[], now=10.0)
-        session.update(occupant, tableware_detections=[], now=11.5)
+        session.update(occupant, tableware_detections=[], now=11.6)
         self.assertEqual(session.current_state, TableState.WAITING_FOR_FOOD)
 
         # Tableware arrives and persists
@@ -120,6 +125,65 @@ class TestTableStateEngine(unittest.TestCase):
         session.update(occupant, tableware_detections=tableware, now=13.2)
         self.assertEqual(session.current_state, TableState.DINING)
         print(" [PASS] Test 6: Activity state transitions (WAITING_FOR_FOOD -> DINING) verified")
+
+    def test_07_grounded_primary_state_before_threshold(self):
+        """Test that newly occupied table stays OCCUPIED (grounded) before waiting threshold expires."""
+        session = TableSession(
+            "table_1",
+            dwell_time_sec=1.0,
+            waiting_threshold_sec=10.0,
+            activity_smoothing_sec=1.0,
+        )
+        occupant = [{"track_id": 9}]
+
+        # Dwell satisfied at t=11.5s
+        session.update(occupant, tableware_detections=[], now=10.0)
+        session.update(occupant, tableware_detections=[], now=11.5)
+
+        # Should be OCCUPIED, NOT WAITING_FOR_FOOD yet (only 1.5s seated, threshold is 10s)
+        self.assertEqual(session.primary_state.value, "OCCUPIED")
+        self.assertEqual(session.current_state, TableState.OCCUPIED)
+        self.assertEqual(session.activity_state.value, "UNKNOWN")
+
+        # After 12 seconds (t=22.0s), waiting threshold expires -> transitions to WAITING_FOR_FOOD
+        session.update(occupant, tableware_detections=[], now=22.0)
+        self.assertEqual(session.current_state, TableState.WAITING_FOR_FOOD)
+        self.assertEqual(session.activity_state.value, "ESTIMATED_WAITING")
+
+        print(" [PASS] Test 7: Grounded OCCUPIED state and non-presumptive transition verified")
+
+    def test_08_structured_status_metadata(self):
+        """Test that get_status() returns decoupled primary_state, activity_state, and duration."""
+        session = TableSession("table_2", dwell_time_sec=1.0)
+        occupant = [{"track_id": 12}]
+
+        session.update(occupant, now=10.0)
+        session.update(occupant, now=11.5)
+
+        status = session.get_status(now=15.0)
+        self.assertIn("primary_state", status)
+        self.assertIn("activity_state", status)
+        self.assertIn("occupied_duration_sec", status)
+        self.assertEqual(status["primary_state"], "OCCUPIED")
+        self.assertTrue(status["is_occupied"])
+        self.assertAlmostEqual(status["occupied_duration_sec"], 3.5, places=1)
+
+        print(" [PASS] Test 8: Structured status metadata verified")
+
+    def test_09_vacant_table_with_leftover_tableware_stays_vacant(self):
+        """Test that an empty table with leftover dirty dishes does NOT trigger OCCUPIED or DINING."""
+        session = TableSession("table_3", dwell_time_sec=1.0)
+        tableware = [{"class_name": "bottle"}, {"class_name": "cup"}]
+
+        # Tableware present, but 0 people seated
+        st1 = session.update(occupant_tracks=[], tableware_detections=tableware, now=10.0)
+        st2 = session.update(occupant_tracks=[], tableware_detections=tableware, now=15.0)
+
+        self.assertEqual(st1, TableState.VACANT)
+        self.assertEqual(st2, TableState.VACANT)
+        self.assertEqual(session.primary_state.value, "VACANT")
+        self.assertFalse(session.get_status()["is_occupied"])
+        print(" [PASS] Test 9: Vacant table with leftover tableware stays VACANT verified")
 
 
 if __name__ == "__main__":

@@ -1,16 +1,28 @@
 {
-  "version": "1.1",
-  "description": "DineSight AI - Authentic Restaurant CCTV ROI Configuration",
+  "version": "1.2",
+  "description": "DineSight AI - Calibrated Perspective ROI Configuration",
   "coordinate_type": "normalized",
   "tables": [
     {
       "id": "table_1",
       "name": "Table 1 (Foreground Dining)",
       "polygon": [
-        [0.34, 0.58],
-        [0.65, 0.58],
-        [0.65, 0.98],
-        [0.34, 0.98]
+        [
+          0.35,
+          0.66
+        ],
+        [
+          0.64,
+          0.66
+        ],
+        [
+          0.64,
+          0.98
+        ],
+        [
+          0.35,
+          0.98
+        ]
       ],
       "max_capacity": 4
     },
@@ -18,43 +30,169 @@
       "id": "table_2",
       "name": "Table 2 (Center Dining)",
       "polygon": [
-        [0.30, 0.44],
-        [0.62, 0.44],
-        [0.62, 0.58],
-        [0.30, 0.58]
+        [
+          0.3,
+          0.42
+        ],
+        [
+          0.62,
+          0.42
+        ],
+        [
+          0.62,
+          0.66
+        ],
+        [
+          0.3,
+          0.66
+        ]
       ],
       "max_capacity": 2
     },
     {
       "id": "table_3",
-      "name": "Table 3 (Left Booth)",
+      "name": "Table 3 (Left Booth Foreground)",
       "polygon": [
-        [0.06, 0.40],
-        [0.28, 0.40],
-        [0.28, 0.78],
-        [0.06, 0.78]
+        [
+          0.05,
+          0.4
+        ],
+        [
+          0.34,
+          0.4
+        ],
+        [
+          0.34,
+          0.96
+        ],
+        [
+          0.05,
+          0.96
+        ]
+      ],
+      "max_capacity": 2
+    },
+    {
+      "id": "table_4",
+      "name": "Table 4 (Left Booth Background)",
+      "polygon": [
+        [
+          0.12,
+          0.3
+        ],
+        [
+          0.34,
+          0.3
+        ],
+        [
+          0.34,
+          0.42
+        ],
+        [
+          0.12,
+          0.42
+        ]
+      ],
+      "max_capacity": 2
+    },
+    {
+      "id": "table_5",
+      "name": "Table 5 (Back Center / Background)",
+      "polygon": [
+        [
+          0.48,
+          0.28
+        ],
+        [
+          0.68,
+          0.28
+        ],
+        [
+          0.68,
+          0.42
+        ],
+        [
+          0.48,
+          0.42
+        ]
       ],
       "max_capacity": 2
     }
   ],
-  "entrance": {
-    "id": "entrance_zone",
-    "name": "Restaurant Entrance",
+  "counter": {
+    "id": "counter_zone",
+    "name": "Service / Ordering Counter",
     "polygon": [
-      [0.05, 0.08],
-      [0.30, 0.08],
-      [0.30, 0.35],
-      [0.05, 0.35]
+      [
+        0.68,
+        0.3
+      ],
+      [
+        0.88,
+        0.3
+      ],
+      [
+        0.88,
+        0.62
+      ],
+      [
+        0.68,
+        0.62
+      ]
     ]
   },
   "queue": {
     "id": "queue_zone",
     "name": "Order / Service Counter Queue",
     "polygon": [
-      [0.68, 0.25],
-      [0.95, 0.25],
-      [0.95, 0.85],
-      [0.68, 0.85]
+      [
+        0.65,
+        0.38
+      ],
+      [
+        0.98,
+        0.38
+      ],
+      [
+        0.98,
+        0.98
+      ],
+      [
+        0.65,
+        0.98
+      ]
+    ]
+  },
+  "entrance": {
+    "id": "entrance_zone",
+    "name": "Restaurant Entrance",
+    "polygon": [
+      [
+        0.02,
+        0.05
+      ],
+      [
+        0.35,
+        0.05
+      ],
+      [
+        0.35,
+        0.32
+      ],
+      [
+        0.02,
+        0.32
+      ]
+    ],
+    "tripwire": [
+      [
+        0.02,
+        0.32
+      ],
+      [
+        0.35,
+        0.32
+      ]
     ]
   }
 }

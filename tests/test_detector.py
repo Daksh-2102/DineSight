@@ -120,6 +120,110 @@ class TestYOLODetector(unittest.TestCase):
         self.assertGreater(np.sum(annotated), 0)
         print(" [PASS] Test 7: Bounding box drawing verified")
 
+    def test_08_configurable_iou_and_imgsz(self):
+        """Verify initialization with custom iou_threshold and imgsz."""
+        detector = YOLODetector(
+            model_path=self.MODEL_PATH,
+            conf_threshold=0.25,
+            iou_threshold=0.45,
+            imgsz=800,
+        )
+        self.assertEqual(detector.conf_threshold, 0.25)
+        self.assertEqual(detector.iou_threshold, 0.45)
+        self.assertEqual(detector.imgsz, 800)
+        print(" [PASS] Test 8: Custom IoU and imgsz configuration verified")
+
+    def test_09_dynamic_threshold_setters(self):
+        """Verify dynamic setters and validation checks for conf, iou, and imgsz."""
+        detector = YOLODetector(model_path=self.MODEL_PATH)
+        
+        detector.set_confidence_threshold(0.20)
+        self.assertEqual(detector.conf_threshold, 0.20)
+
+        detector.set_iou_threshold(0.60)
+        self.assertEqual(detector.iou_threshold, 0.60)
+
+        detector.set_imgsz(800)
+        self.assertEqual(detector.imgsz, 800)
+
+        with self.assertRaises(ValueError):
+            detector.set_confidence_threshold(-0.1)
+        with self.assertRaises(ValueError):
+            detector.set_confidence_threshold(1.5)
+        with self.assertRaises(ValueError):
+            detector.set_iou_threshold(-0.05)
+        with self.assertRaises(ValueError):
+            detector.set_imgsz(0)
+
+        print(" [PASS] Test 9: Dynamic threshold setters and bounds validation verified")
+
+    def test_10_confidence_sensitivity_filtering(self):
+        """Verify that lower confidence threshold returns equal or more detections."""
+        with VideoReader(self.SAMPLE_VIDEO) as reader:
+            success, frame, _ = reader.read_frame()
+            self.assertTrue(success)
+
+            detector = YOLODetector(model_path=self.MODEL_PATH, conf_threshold=0.35)
+            dets_35 = detector.detect(frame)
+
+            detector.set_confidence_threshold(0.20)
+            dets_20 = detector.detect(frame)
+
+            self.assertGreaterEqual(len(dets_20), len(dets_35))
+            for d in dets_20:
+                self.assertGreaterEqual(d["confidence"], 0.20)
+
+            print(
+                f" [PASS] Test 10: Confidence sensitivity verified "
+                f"({len(dets_35)} @ 0.35 vs {len(dets_20)} @ 0.20)"
+            )
+
+    def test_11_tableware_detection_and_filtering(self):
+        """Test tableware detection specifically targets tableware classes and formats output."""
+        from backend.app.core.detector import COCO_TABLEWARE_CLASSES
+        detector = YOLODetector(model_path=self.MODEL_PATH, conf_threshold=0.15)
+        # Blank canvas
+        blank = np.zeros((480, 640, 3), dtype=np.uint8)
+        tw_blank = detector.detect_tableware(blank)
+        self.assertIsInstance(tw_blank, list)
+        self.assertEqual(len(tw_blank), 0)
+
+        # Real CCTV frame test (Frame 50 has detected bottle and wine glass)
+        cctv_path = "data/sample_videos/restaurant_cctv_sample.mp4"
+        if os.path.exists(cctv_path):
+            with VideoReader(cctv_path) as reader:
+                # Seek to frame 50
+                for _ in range(50):
+                    reader.read_frame()
+                success, frame, _ = reader.read_frame()
+                self.assertTrue(success)
+
+                tw_dets = detector.detect_tableware(frame, conf_threshold=0.10)
+                self.assertIsInstance(tw_dets, list)
+                for item in tw_dets:
+                    self.assertIn("bbox", item)
+                    self.assertIn("confidence", item)
+                    self.assertIn("class_id", item)
+                    self.assertIn(item["class_id"], COCO_TABLEWARE_CLASSES)
+
+        print(" [PASS] Test 11: Tableware detection and class filtering verified")
+
+    def test_12_tableware_visual_drawing(self):
+        """Test drawing tableware detections with distinct accent styling."""
+        detector = YOLODetector(model_path=self.MODEL_PATH)
+        canvas = np.zeros((480, 640, 3), dtype=np.uint8)
+        dummy_tw = [{
+            "bbox": [100, 100, 150, 180],
+            "confidence": 0.45,
+            "class_id": 39,
+            "class_name": "bottle",
+            "center": (125, 140),
+        }]
+        annotated = detector.draw_detections(canvas, dummy_tw)
+        self.assertIsInstance(annotated, np.ndarray)
+        self.assertGreater(np.sum(annotated), 0)
+        print(" [PASS] Test 12: Tableware visual annotation and accent styling verified")
+
 
 if __name__ == "__main__":
     print("\nRunning DineSight AI - Phase 2 YOLODetector Test Suite...\n" + "=" * 55)

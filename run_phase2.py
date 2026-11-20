@@ -198,6 +198,17 @@ def main():
         action="store_true",
         help="Disable automatic looping when video ends",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without displaying a GUI window",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=0,
+        help="Maximum frames to process before exiting (0 = infinite)",
+    )
 
     args = parser.parse_args()
     source_val: Union[str, int] = int(args.source) if args.source.isdigit() else args.source
@@ -245,8 +256,9 @@ def main():
     print("  [q] or [ESC]  : Quit\n")
 
     window_name = "DineSight AI - Phase 2: YOLOv8 + ByteTrack"
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, args.width, args.height)
+    if not args.headless:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, args.width, args.height)
 
     delay_ms = max(1, int(1000.0 / (reader.source_fps or 30.0)))
     paused = False
@@ -286,29 +298,36 @@ def main():
                     paused=paused,
                 )
 
-                cv2.imshow(window_name, annotated)
+                if not args.headless:
+                    cv2.imshow(window_name, annotated)
 
-            key = cv2.waitKey(delay_ms if not paused else 30) & 0xFF
-            if key in (ord('q'), 27):
-                print("\n[DineSight AI] Exit requested by user.")
+            if args.max_frames > 0 and current_idx >= args.max_frames:
+                print(f"\n[DineSight AI] Reached target max frames ({args.max_frames}). Completed.")
                 break
-            elif key in (ord('p'), ord(' ')):
-                paused = not paused
-                print(f"[Playback] {'PAUSED' if paused else 'RESUMED'}")
-            elif key == ord('r'):
-                reader.restart()
-                tracker.reset()
-                print("[Playback] Rewound and tracker state reset.")
-            elif key in (ord('+'), ord('=')):
-                reader.frame_skip += 1
-                print(f"[Config] Frame skip: {reader.frame_skip}")
-            elif key in (ord('-'), ord('_')):
-                reader.frame_skip = max(1, reader.frame_skip - 1)
-                print(f"[Config] Frame skip: {reader.frame_skip}")
+
+            if not args.headless:
+                key = cv2.waitKey(delay_ms if not paused else 30) & 0xFF
+                if key in (ord('q'), 27):
+                    print("\n[DineSight AI] Exit requested by user.")
+                    break
+                elif key in (ord('p'), ord(' ')):
+                    paused = not paused
+                    print(f"[Playback] {'PAUSED' if paused else 'RESUMED'}")
+                elif key == ord('r'):
+                    reader.restart()
+                    tracker.reset()
+                    print("[Playback] Rewound and tracker state reset.")
+                elif key in (ord('+'), ord('=')):
+                    reader.frame_skip += 1
+                    print(f"[Config] Frame skip: {reader.frame_skip}")
+                elif key in (ord('-'), ord('_')):
+                    reader.frame_skip = max(1, reader.frame_skip - 1)
+                    print(f"[Config] Frame skip: {reader.frame_skip}")
 
     finally:
         reader.release()
-        cv2.destroyAllWindows()
+        if not args.headless:
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
